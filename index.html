@@ -25,17 +25,24 @@
 
     <div class="header-controls">
       <div class="input-group">
-        <label for="repo-input">Repo</label>
-        <input type="text" id="repo-input" placeholder="owner/repo (e.g. herdrdev/herdr)" spellcheck="false" autocomplete="off">
+        <label for="source-select">Source</label>
+        <select id="source-select" class="source-select" title="Choose Git Source: GitHub or GitLab">
+          <option value="github">GitHub</option>
+          <option value="gitlab">GitLab</option>
+        </select>
       </div>
 
       <div class="input-group">
-        <label for="pat-input">Token</label>
-        <input type="password" id="pat-input" placeholder="GitHub PAT (optional)" spellcheck="false" autocomplete="off" title="Stored in session storage only">
+        <label for="repo-input">Repo</label>
+        <input type="text" id="repo-input" placeholder="owner/repo (or full GitLab/GitHub URL)" spellcheck="false" autocomplete="off">
+      </div>
+
+      <div class="input-group">
+        <label for="pat-input" id="pat-label">Token</label>
+        <input type="password" id="pat-input" placeholder="PAT (optional)" spellcheck="false" autocomplete="off" title="Stored in session storage only">
       </div>
 
       <button class="btn btn-primary" id="btn-load-repo">Load</button>
-      <button class="btn btn-secondary" id="btn-load-demo" title="Load offline demo repository">Load Demo</button>
     </div>
   </header>
 
@@ -95,7 +102,7 @@
   <main class="main-layout">
     <div class="viewport">
       <div class="repo-meta-bar" id="repo-meta-bar">
-        <span class="repo-meta-name" id="status-text">demo-repo (3 branches)</span>
+        <span class="repo-meta-name" id="status-text">Ready to load repository</span>
         <span class="repo-meta-hint">Smart collapsed: branch tips &amp; divergence points visible</span>
       </div>
 

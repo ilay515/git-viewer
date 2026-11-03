@@ -140,6 +140,22 @@ body {
   color: var(--text-tertiary);
 }
 
+.source-select {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  padding-right: 2px;
+  font-weight: 500;
+}
+
+.source-select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;
@@ -491,8 +507,21 @@ body {
 }
 
 .btn-load-more-commits:disabled {
-  opacity: 0.5;
-  cursor: wait;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-load-more-commits.reached-bottom {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-tertiary);
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.btn-load-more-commits.reached-bottom svg {
+  color: var(--branch-dev);
 }
 
 /* Main Layout */

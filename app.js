@@ -1,11 +1,14 @@
 // GitBranch Lens: Client-Only Git Branch Divergence Viewer
 // Pure client-side implementation with zero backend dependencies
+// Supports GitHub and GitLab repositories directly
 
 (function () {
   'use strict';
 
   // --- STATE ---
   const state = {
+    gitSource: localStorage.getItem('git_source') || 'github',
+    gitHost: localStorage.getItem('git_host') || '',
     pat: sessionStorage.getItem('git_pat') || localStorage.getItem('git_pat') || '',
     repo: localStorage.getItem('git_repo') || 'herdrdev/herdr',
     branches: [],
@@ -14,7 +17,6 @@
     displayRows: [],       // computed list of render items (commits or collapsed chains)
     expandedChains: new Set(), // set of chain IDs currently expanded
     selectedCommit: null,
-    isDemo: false,
     loading: false,
     rateLimit: { remaining: null, limit: null },
     filterMode: 'smart',   // 'smart' (tips & diversions) | 'all'
@@ -27,6 +29,7 @@
     commitsDepth: 50,               // default commits depth
     branchPages: new Map(),         // branchName -> page number
     branchLoadingMore: new Set(),   // set of branches currently fetching more
+    branchReachedBottom: new Set(), // set of branches where root/bottom commit was reached
     branchOrigins: new Map(),       // branchName -> { commitSha, parentBranch }
   };
 
@@ -62,211 +65,93 @@
     return hash;
   }
 
-  // --- DEMO FIXTURE GENERATOR ---
-  function generateDemoData() {
-    const now = Date.now();
-    const hour = 3600 * 1000;
-    const day = 24 * hour;
+  // --- REPOSITORY INPUT PARSER ---
+  function parseRepoInput(rawInput, defaultSource = 'github') {
+    let input = (rawInput || '').trim();
+    if (input.endsWith('.git')) {
+      input = input.slice(0, -4);
+    }
+    input = input.replace(/\/+$/, '');
 
-    // Common Ancestor (Fork Point: Commit 10 on main)
-    const forkCommit = {
-      sha: '056af4c8b21901a',
-      shortSha: '056af4c',
-      message: 'feat(core): commit 10 on main branch\n\nStable release milestone where develop diverged.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 10 * day).toISOString(),
-      parents: ['3e1dedd9'],
-      branch: 'main',
-      stats: { additions: 140, deletions: 32 },
-      isForkPoint: true,
-      forkChildren: ['main', 'develop'],
-    };
+    let source = defaultSource;
+    let host = source === 'gitlab' ? 'https://gitlab.com' : 'https://api.github.com';
+    let repoPath = input;
 
-    // Commits on main after fork point (commits 11 to 19: 9 intermediate commits)
-    const mainIntermediate = [];
-    for (let i = 11; i <= 19; i++) {
-      mainIntermediate.push({
-        sha: `m${i}c01f83c9${i}`,
-        shortSha: `m${i}c01f8`,
-        message: `feat(core): commit ${i} on main branch`,
-        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-        date: new Date(now - (10 * day) + ((i - 10) * 8 * hour)).toISOString(),
-        parents: [i === 11 ? forkCommit.sha : `m${i-1}c01f83c9${i-1}`],
-        branch: 'main',
-        stats: { additions: 15 + i, deletions: 4 },
-      });
+    if (input.startsWith('http://') || input.startsWith('https://')) {
+      try {
+        const u = new URL(input);
+        const pathname = u.pathname.replace(/^\/+/, '');
+        if (u.hostname === 'github.com') {
+          source = 'github';
+          host = 'https://api.github.com';
+          repoPath = pathname;
+        } else if (u.hostname === 'gitlab.com' || u.hostname.includes('gitlab')) {
+          source = 'gitlab';
+          host = `${u.protocol}//${u.host}`;
+          repoPath = pathname;
+        } else {
+          repoPath = pathname;
+        }
+      } catch (e) {}
+    } else if (input.startsWith('github.com/')) {
+      source = 'github';
+      host = 'https://api.github.com';
+      repoPath = input.replace(/^github\.com\/+/, '');
+    } else if (input.startsWith('gitlab.com/')) {
+      source = 'gitlab';
+      host = 'https://gitlab.com';
+      repoPath = input.replace(/^gitlab\.com\/+/, '');
     }
 
-    // Commit 20 on main (HEAD)
-    const mainHead = {
-      sha: 'b721c5e9a01f844',
-      shortSha: 'b721c5e',
-      message: 'feat(core): commit 20 on main branch\n\nLatest stable production deployment on main.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 1 * day).toISOString(),
-      parents: [mainIntermediate[mainIntermediate.length - 1].sha],
-      branch: 'main',
-      stats: { additions: 24, deletions: 6 },
-      isHead: true,
-    };
-
-    // Commits on main before fork point (commits 1 to 9: 9 base commits)
-    const mainBase = [];
-    for (let i = 1; i <= 9; i++) {
-      mainBase.push({
-        sha: `b${i}a60b2c1${i}`,
-        shortSha: `b${i}a60b2`,
-        message: `feat(core): commit ${i} on main branch`,
-        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-        date: new Date(now - (15 * day) + (i * 8 * hour)).toISOString(),
-        parents: [i === 1 ? 'initial' : `b${i-1}a60b2c1${i-1}`],
-        branch: 'main',
-        stats: { additions: 20 + i, deletions: 2 },
-      });
-    }
-
-    // 20 Additional commits on develop (Commit 1: Diversion start)
-    const devDiversionStart = {
-      sha: 'b9845ba023819e1',
-      shortSha: 'b9845ba',
-      message: 'feat(develop): additional commit 1 on develop branch\n\nFirst commit branched off main fork point.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 9 * day).toISOString(),
-      parents: [forkCommit.sha],
-      branch: 'develop',
-      stats: { additions: 55, deletions: 12 },
-      isDiversionStart: true,
-    };
-
-    // Additional commits 2 to 19 on develop (18 intermediate commits)
-    const devIntermediate = [];
-    let devForkForAuth = null;
-    for (let i = 2; i <= 19; i++) {
-      const isForkForAuth = (i === 10);
-      const commitObj = {
-        sha: `d${i}6c78f5e${i}`,
-        shortSha: `d${i}6c78f`,
-        message: isForkForAuth
-          ? 'feat(develop): additional commit 10 on develop branch\n\nBranch point for feature/auth token subsystem.'
-          : `feat(develop): additional commit ${i} on develop branch`,
-        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-        date: new Date(now - (9 * day) + ((i - 1) * 8 * hour)).toISOString(),
-        parents: [i === 2 ? devDiversionStart.sha : `d${i-1}6c78f5e${i-1}`],
-        branch: 'develop',
-        stats: { additions: 30 + i, deletions: 5 },
-        isForkPoint: isForkForAuth,
-        forkChildren: isForkForAuth ? ['develop', 'feature/auth'] : undefined,
-      };
-      if (isForkForAuth) devForkForAuth = commitObj;
-      devIntermediate.push(commitObj);
-    }
-
-    // Additional commit 20 on develop (HEAD)
-    const devHead = {
-      sha: '6c78f5e93d8101a',
-      shortSha: '6c78f5e',
-      message: 'feat(develop): additional commit 20 on develop branch\n\nLatest staging feature implementation on develop.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 2 * hour).toISOString(),
-      parents: [devIntermediate[devIntermediate.length - 1].sha],
-      branch: 'develop',
-      stats: { additions: 110, deletions: 14 },
-      isHead: true,
-    };
-
-    // 3rd Branch: feature/auth (8 commits branching off commit 10 on develop)
-    const authDiversionStart = {
-      sha: '4fa439e9a1102b1',
-      shortSha: '4fa439e',
-      message: 'feat(auth): implement token authentication step 1\n\nInitial diversion from develop for OAuth2 token validation.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 4 * day).toISOString(),
-      parents: [devForkForAuth ? devForkForAuth.sha : forkCommit.sha],
-      branch: 'feature/auth',
-      stats: { additions: 75, deletions: 10 },
-      isDiversionStart: true,
-    };
-
-    const authIntermediate = [];
-    for (let i = 2; i <= 7; i++) {
-      authIntermediate.push({
-        sha: `a${i}4fa439e${i}`,
-        shortSha: `a${i}4fa43`,
-        message: `feat(auth): implement token authentication step ${i}`,
-        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-        date: new Date(now - (4 * day) + ((i - 1) * 6 * hour)).toISOString(),
-        parents: [i === 2 ? authDiversionStart.sha : `a${i-1}4fa439e${i-1}`],
-        branch: 'feature/auth',
-        stats: { additions: 35 + i, deletions: 4 },
-      });
-    }
-
-    const authHead = {
-      sha: 'bb48b139384bc12',
-      shortSha: 'bb48b13',
-      message: 'feat(auth): implement token authentication step 8\n\nComplete OAuth2 session refresh integration.',
-      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 1 * hour).toISOString(),
-      parents: [authIntermediate[authIntermediate.length - 1].sha],
-      branch: 'feature/auth',
-      stats: { additions: 92, deletions: 11 },
-      isHead: true,
-    };
-
-    return {
-      branches: [
-        { name: 'main', commit: { sha: mainHead.sha } },
-        { name: 'develop', commit: { sha: devHead.sha } },
-        { name: 'feature/auth', commit: { sha: authHead.sha } },
-      ],
-      commits: [
-        authHead,
-        ...authIntermediate.reverse(),
-        authDiversionStart,
-        devHead,
-        ...devIntermediate.reverse(),
-        devDiversionStart,
-        mainHead,
-        ...mainIntermediate.reverse(),
-        forkCommit,
-        ...mainBase.reverse(),
-      ],
-      origins: [
-        { branch: 'develop', commitSha: forkCommit.sha, parentBranch: 'main' },
-        { branch: 'feature/auth', commitSha: devForkForAuth.sha, parentBranch: 'develop' },
-      ],
-    };
+    return { source, host, repoPath };
   }
 
-  // --- GITHUB API CLIENT ---
-  async function fetchGitHub(endpoint) {
-    const url = endpoint.startsWith('https://') ? endpoint : `https://api.github.com${endpoint}`;
-    const headers = {
-      'Accept': 'application/vnd.github.v3+json',
-    };
-    if (state.pat && state.pat.trim()) {
-      headers['Authorization'] = `Bearer ${state.pat.trim()}`;
+  // --- UNIFIED GIT API CLIENT (GitHub + GitLab) ---
+  async function fetchGitSource(endpoint) {
+    let url;
+    const headers = {};
+
+    if (state.gitSource === 'gitlab') {
+      const baseHost = state.gitHost || 'https://gitlab.com';
+      url = endpoint.startsWith('http') ? endpoint : `${baseHost}/api/v4${endpoint}`;
+      headers['Accept'] = 'application/json';
+      if (state.pat && state.pat.trim()) {
+        headers['PRIVATE-TOKEN'] = state.pat.trim();
+        headers['Authorization'] = `Bearer ${state.pat.trim()}`;
+      }
+    } else {
+      url = endpoint.startsWith('http') ? endpoint : `https://api.github.com${endpoint}`;
+      headers['Accept'] = 'application/vnd.github.v3+json';
+      if (state.pat && state.pat.trim()) {
+        headers['Authorization'] = `Bearer ${state.pat.trim()}`;
+      }
     }
 
     const resp = await fetch(url, { headers });
 
-    // Capture rate limit
-    const rem = resp.headers.get('x-ratelimit-remaining');
-    const limit = resp.headers.get('x-ratelimit-limit');
+    // Capture rate limits (GitLab ratelimit-* or GitHub x-ratelimit-*)
+    const rem = resp.headers.get('ratelimit-remaining') || resp.headers.get('x-ratelimit-remaining');
+    const limit = resp.headers.get('ratelimit-limit') || resp.headers.get('x-ratelimit-limit');
     if (rem !== null) {
-      state.rateLimit = { remaining: parseInt(rem, 10), limit: parseInt(limit, 10) };
+      state.rateLimit = {
+        remaining: parseInt(rem, 10),
+        limit: limit ? parseInt(limit, 10) : (state.gitSource === 'gitlab' ? 500 : 60),
+      };
       renderRateLimit();
     }
 
     if (!resp.ok) {
-      let errMsg = `GitHub API error (${resp.status} ${resp.statusText})`;
+      const sourceName = state.gitSource === 'gitlab' ? 'GitLab' : 'GitHub';
+      let errMsg = `${sourceName} API error (${resp.status} ${resp.statusText})`;
       try {
         const errJson = await resp.json();
         if (errJson.message) {
-          errMsg = errJson.message;
+          errMsg = typeof errJson.message === 'string' ? errJson.message : JSON.stringify(errJson.message);
           if (resp.status === 403 && errMsg.includes('rate limit')) {
-            errMsg += ' — Please enter a Personal Access Token (PAT) above to increase rate limits to 5,000 req/hr.';
+            errMsg += ` — Please enter a Personal Access Token (PAT) above to increase API rate limits.`;
           }
+        } else if (errJson.error) {
+          errMsg = errJson.error;
         }
       } catch (e) {}
       throw new Error(errMsg);
@@ -276,14 +161,22 @@
   }
 
   // Paginated Branch Fetcher (Fetches ALL branches, not just the first 100)
-  async function fetchAllBranches(ownerRepo) {
+  async function fetchAllBranches(repoPath) {
     const allBranches = [];
     let page = 1;
     const maxPages = 10; // Up to 1,000 branches
 
     while (page <= maxPages) {
-      renderStatus(`Fetching branches for ${ownerRepo} (page ${page})...`);
-      const data = await fetchGitHub(`/repos/${ownerRepo}/branches?per_page=100&page=${page}`);
+      renderStatus(`Fetching branches for ${repoPath} (page ${page})...`);
+      let endpoint;
+      if (state.gitSource === 'gitlab') {
+        const projectId = encodeURIComponent(repoPath);
+        endpoint = `/projects/${projectId}/repository/branches?per_page=100&page=${page}`;
+      } else {
+        endpoint = `/repos/${repoPath}/branches?per_page=100&page=${page}`;
+      }
+
+      const data = await fetchGitSource(endpoint);
       if (!Array.isArray(data) || data.length === 0) break;
       allBranches.push(...data);
       if (data.length < 100) break;
@@ -293,10 +186,63 @@
     return allBranches;
   }
 
+  async function fetchBranchCommits(repoPath, branchName, perPage, page) {
+    if (state.gitSource === 'gitlab') {
+      const projectId = encodeURIComponent(repoPath);
+      return await fetchGitSource(`/projects/${projectId}/repository/commits?ref_name=${encodeURIComponent(branchName)}&per_page=${perPage}&page=${page}`);
+    } else {
+      return await fetchGitSource(`/repos/${repoPath}/commits?sha=${encodeURIComponent(branchName)}&per_page=${perPage}&page=${page}`);
+    }
+  }
+
+  function formatCommit(c, branch) {
+    if (!c) return null;
+    const isGitLab = state.gitSource === 'gitlab' || Boolean(c.id && !c.sha);
+
+    if (isGitLab) {
+      const sha = c.id;
+      return {
+        sha: sha,
+        shortSha: c.short_id || (sha ? sha.substring(0, 7) : ''),
+        message: c.message || c.title || '',
+        author: {
+          name: c.author_name || 'Developer',
+          login: c.author_email ? c.author_email.split('@')[0] : 'author',
+          avatar: c.author_gravatar_url || 'https://assets.gitlab-static.net/assets/gitlab_logo-7ae504fe4f68fdebb3d2032e37952294f447f781808e3987163796a210209f6d.png',
+        },
+        date: c.committed_date || c.created_at || new Date().toISOString(),
+        parents: c.parent_ids || [],
+        branch: branch,
+        stats: c.stats || { additions: 0, deletions: 0 },
+        isHead: false,
+        isForkPoint: false,
+        isDiversionStart: false,
+      };
+    } else {
+      return {
+        sha: c.sha,
+        shortSha: c.sha ? c.sha.substring(0, 7) : '',
+        message: c.commit?.message || c.message || '',
+        author: {
+          name: c.commit?.author?.name || c.author?.login || 'Developer',
+          login: c.author?.login || 'unknown',
+          avatar: c.author?.avatar_url || 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
+        },
+        date: c.commit?.author?.date || c.created_at || new Date().toISOString(),
+        parents: (c.parents || []).map(p => typeof p === 'string' ? p : p.sha),
+        branch: branch,
+        stats: c.stats || { additions: 0, deletions: 0 },
+        isHead: false,
+        isForkPoint: false,
+        isDiversionStart: false,
+      };
+    }
+  }
+
   // Resolve default branches: main, master, dev, develop
   function resolveDefaultBranches(repoInfo, branches) {
     const names = branches.map(b => b.name);
-    const repoDefault = repoInfo?.default_branch;
+    const repoDefault = repoInfo?.default_branch || branches.find(b => b.default)?.name;
 
     // 1. Primary branch candidate: repo default_branch, or master, or main
     const primaryCandidates = [repoDefault, 'master', 'main'].filter(Boolean);
@@ -322,36 +268,54 @@
     return selected;
   }
 
-  async function loadRepository(ownerRepo) {
+  async function loadRepository(repoInputVal) {
+    const parsed = parseRepoInput(repoInputVal, state.gitSource);
+    state.gitSource = parsed.source;
+    state.gitHost = parsed.host;
+    state.repo = parsed.repoPath;
+    localStorage.setItem('git_source', state.gitSource);
+    localStorage.setItem('git_repo', state.repo);
+    localStorage.setItem('git_host', state.gitHost);
+    updateSourceUI();
+
     state.loading = true;
-    renderStatus(`Fetching repository ${ownerRepo}...`);
+    state.branchReachedBottom.clear();
+    state.commitsMap.clear();
+    state.branchOrigins.clear();
+    state.expandedChains.clear();
+    state.selectedCommit = null;
+    renderStatus(`Fetching repository ${state.repo} from ${state.gitSource === 'gitlab' ? 'GitLab' : 'GitHub'}...`);
 
     try {
-      // 1. Fetch repo info (to get default_branch)
+      // 1. Fetch repo info (default_branch, web_url, etc.)
       let repoInfo = null;
       try {
-        repoInfo = await fetchGitHub(`/repos/${ownerRepo}`);
+        if (state.gitSource === 'gitlab') {
+          const projectId = encodeURIComponent(state.repo);
+          repoInfo = await fetchGitSource(`/projects/${projectId}`);
+        } else {
+          repoInfo = await fetchGitSource(`/repos/${state.repo}`);
+        }
         state.repoInfo = repoInfo;
       } catch (e) {
         console.warn('Could not fetch repo metadata directly:', e);
       }
 
       // 2. Fetch all branches with pagination
-      const branchesData = await fetchAllBranches(ownerRepo);
+      const branchesData = await fetchAllBranches(state.repo);
       if (branchesData.length === 0) {
         throw new Error('No branches found in this repository.');
       }
       state.branches = branchesData;
 
-      // 3. Resolve default branches (prioritizes master, main, dev, develop)
+      // 3. Resolve default branches (prioritizes default_branch, master, main, dev, develop)
       state.selectedBranches = resolveDefaultBranches(repoInfo, branchesData);
 
       // 4. Fetch commits and branch divergence
-      await fetchCommitsForBranches(ownerRepo, state.selectedBranches);
+      await fetchCommitsForBranches(state.repo, state.selectedBranches);
 
-      state.isDemo = false;
       state.loading = false;
-      renderStatus(`Loaded ${branchesData.length} branches from ${ownerRepo}. Comparing: ${state.selectedBranches.join(' vs ')}`);
+      renderStatus(`Loaded ${branchesData.length} branches from ${state.repo}. Comparing: ${state.selectedBranches.join(' vs ')}`);
       renderApp();
     } catch (err) {
       state.loading = false;
@@ -372,12 +336,35 @@
     for (const head of otherBranches) {
       renderStatus(`Analyzing divergence: ${base}...${head}...`);
       try {
-        const compare = await fetchGitHub(`/repos/${ownerRepo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+        let mergeBase = null;
+        let diffCommits = [];
+
+        if (state.gitSource === 'gitlab') {
+          const projectId = encodeURIComponent(ownerRepo);
+          try {
+            const mb = await fetchGitSource(`/projects/${projectId}/repository/merge_base?refs[]=${encodeURIComponent(base)}&refs[]=${encodeURIComponent(head)}`);
+            if (mb && mb.id) mergeBase = mb;
+          } catch (e) {
+            console.warn(`GitLab merge_base failed between ${base} and ${head}:`, e);
+          }
+          try {
+            const comp = await fetchGitSource(`/projects/${projectId}/repository/compare?from=${encodeURIComponent(base)}&to=${encodeURIComponent(head)}`);
+            if (comp && Array.isArray(comp.commits)) diffCommits = comp.commits;
+          } catch (e) {
+            console.warn(`GitLab compare failed between ${base} and ${head}:`, e);
+          }
+        } else {
+          // GitHub compare API
+          const compare = await fetchGitSource(`/repos/${ownerRepo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+          if (compare) {
+            mergeBase = compare.merge_base_commit;
+            diffCommits = compare.commits || [];
+          }
+        }
 
         // Common Ancestor / Fork Point
-        const mergeBase = compare.merge_base_commit;
         if (mergeBase) {
-          const mbObj = formatGitHubCommit(mergeBase, base);
+          const mbObj = formatCommit(mergeBase, base);
           mbObj.isForkPoint = true;
           if (!mbObj.forkChildren) mbObj.forkChildren = [];
           if (!mbObj.forkChildren.includes(head)) mbObj.forkChildren.push(head);
@@ -391,16 +378,16 @@
         }
 
         // Commits unique to head branch
-        if (compare.commits && compare.commits.length > 0) {
-          compare.commits.forEach((c, idx) => {
-            const commitObj = formatGitHubCommit(c, head);
+        if (diffCommits && diffCommits.length > 0) {
+          diffCommits.forEach((c, idx) => {
+            const commitObj = formatCommit(c, head);
             if (idx === 0) commitObj.isDiversionStart = true;
-            if (idx === compare.commits.length - 1) commitObj.isHead = true;
+            if (idx === diffCommits.length - 1) commitObj.isHead = true;
             state.commitsMap.set(commitObj.sha, commitObj);
           });
         }
       } catch (e) {
-        console.warn(`Compare API failed between ${base} and ${head}:`, e);
+        console.warn(`Divergence analysis failed between ${base} and ${head}:`, e);
       }
     }
 
@@ -408,17 +395,30 @@
     for (const bName of selectedBranchNames) {
       state.branchPages.set(bName, 1);
       try {
-        const list = await fetchGitHub(`/repos/${ownerRepo}/commits?sha=${encodeURIComponent(bName)}&per_page=${state.commitsDepth}&page=1`);
-        list.forEach((c, idx) => {
-          if (!state.commitsMap.has(c.sha)) {
-            const commitObj = formatGitHubCommit(c, bName);
+        const list = await fetchBranchCommits(ownerRepo, bName, state.commitsDepth, 1);
+        if (!Array.isArray(list) || list.length === 0) {
+          state.branchReachedBottom.add(bName);
+        } else {
+          list.forEach((c, idx) => {
+            const commitObj = formatCommit(c, bName);
             if (idx === 0) commitObj.isHead = true;
-            state.commitsMap.set(commitObj.sha, commitObj);
-          } else {
-            const existing = state.commitsMap.get(c.sha);
-            if (idx === 0) existing.isHead = true;
+            if (!state.commitsMap.has(commitObj.sha)) {
+              state.commitsMap.set(commitObj.sha, commitObj);
+            } else {
+              const existing = state.commitsMap.get(commitObj.sha);
+              if (idx === 0) existing.isHead = true;
+            }
+          });
+
+          // Check if root commit was reached (fewer commits than requested, or commit with no parents)
+          const hasRootCommit = list.some(c => {
+            const p = (state.gitSource === 'gitlab' || c.id) ? c.parent_ids : c.parents;
+            return !p || p.length === 0;
+          });
+          if (list.length < state.commitsDepth || hasRootCommit) {
+            state.branchReachedBottom.add(bName);
           }
-        });
+        }
       } catch (e) {
         console.error(`Error loading commits for branch ${bName}:`, e);
       }
@@ -426,53 +426,35 @@
   }
 
   async function loadMoreCommits(branchName) {
-    if (state.branchLoadingMore.has(branchName)) return;
+    if (state.branchReachedBottom.has(branchName) || state.branchLoadingMore.has(branchName)) return;
     state.branchLoadingMore.add(branchName);
     renderGraph();
-
-    if (state.isDemo) {
-      // Simulate adding 10 more historical commits for this branch in demo mode
-      const bCommits = Array.from(state.commitsMap.values()).filter(c => c.branch === branchName);
-      bCommits.sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest first
-      const oldest = bCommits[0];
-      const oldestTime = oldest ? new Date(oldest.date).getTime() : Date.now();
-      const startIndex = bCommits.length + 1;
-
-      for (let i = startIndex; i < startIndex + 10; i++) {
-        const extraSha = `x${i}${hashCode(branchName).toString(16).slice(-4)}${i}`;
-        state.commitsMap.set(extraSha, {
-          sha: extraSha,
-          shortSha: extraSha.substring(0, 7),
-          message: `chore(${branchName}): historical baseline commit ${i}`,
-          author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-          date: new Date(oldestTime - (i - startIndex + 1) * 86400000).toISOString(),
-          parents: [`parent_${i}`],
-          branch: branchName,
-          stats: { additions: 12 + i, deletions: 3 },
-          isHead: false,
-        });
-      }
-      state.branchLoadingMore.delete(branchName);
-      renderStatus(`Loaded 10 more historical commits for ${branchName}.`);
-      renderGraph();
-      return;
-    }
 
     const nextPage = (state.branchPages.get(branchName) || 1) + 1;
     renderStatus(`Fetching page ${nextPage} of commits for ${branchName}...`);
 
     try {
-      const list = await fetchGitHub(`/repos/${state.repo}/commits?sha=${encodeURIComponent(branchName)}&per_page=${state.commitsDepth}&page=${nextPage}`);
+      const list = await fetchBranchCommits(state.repo, branchName, state.commitsDepth, nextPage);
       if (Array.isArray(list) && list.length > 0) {
         list.forEach(c => {
-          if (!state.commitsMap.has(c.sha)) {
-            const commitObj = formatGitHubCommit(c, branchName);
+          const commitObj = formatCommit(c, branchName);
+          if (!state.commitsMap.has(commitObj.sha)) {
             state.commitsMap.set(commitObj.sha, commitObj);
           }
         });
         state.branchPages.set(branchName, nextPage);
         renderStatus(`Loaded ${list.length} more commits for ${branchName} (page ${nextPage}).`);
+
+        const hasRootCommit = list.some(c => {
+          const p = (state.gitSource === 'gitlab' || c.id) ? c.parent_ids : c.parents;
+          return !p || p.length === 0;
+        });
+        if (list.length < state.commitsDepth || hasRootCommit) {
+          state.branchReachedBottom.add(branchName);
+          renderStatus(`Reached branch root for ${branchName}.`);
+        }
       } else {
+        state.branchReachedBottom.add(branchName);
         renderStatus(`Reached earliest available commit for ${branchName}.`);
       }
     } catch (e) {
@@ -482,26 +464,6 @@
       state.branchLoadingMore.delete(branchName);
       renderGraph();
     }
-  }
-
-  function formatGitHubCommit(c, branch) {
-    return {
-      sha: c.sha,
-      shortSha: c.sha.substring(0, 7),
-      message: c.commit.message,
-      author: {
-        name: c.commit.author?.name || c.author?.login || 'Developer',
-        login: c.author?.login || 'unknown',
-        avatar: c.author?.avatar_url || 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
-      },
-      date: c.commit.author?.date || new Date().toISOString(),
-      parents: (c.parents || []).map(p => p.sha),
-      branch: branch,
-      stats: c.stats || { additions: 0, deletions: 0 },
-      isHead: false,
-      isForkPoint: false,
-      isDiversionStart: false,
-    };
   }
 
   // --- DIVERSION & MULTI-COLUMN BRANCH ENGINE ---
@@ -803,7 +765,6 @@
     const inp = document.querySelector(`.column-search-input[data-branch="${branchName}"]`);
     if (inp) {
       inp.focus();
-      // restore cursor to end
       const len = inp.value.length;
       inp.setSelectionRange(len, len);
     }
@@ -817,11 +778,31 @@
     renderInspector();
   }
 
+  function updateSourceUI() {
+    const sourceSelect = document.getElementById('source-select');
+    const repoInput = document.getElementById('repo-input');
+    const patLabel = document.getElementById('pat-label');
+    const patInput = document.getElementById('pat-input');
+
+    if (sourceSelect) sourceSelect.value = state.gitSource;
+    if (patLabel) patLabel.textContent = state.gitSource === 'gitlab' ? 'Token' : 'Token';
+    if (patInput) {
+      patInput.placeholder = state.gitSource === 'gitlab' ? 'GitLab Token (optional)' : 'GitHub PAT (optional)';
+    }
+    if (repoInput && !repoInput.value) {
+      repoInput.placeholder = state.gitSource === 'gitlab' ? 'group/project (or GitLab URL)' : 'owner/repo (or GitHub URL)';
+    }
+  }
+
   function renderHeader() {
+    const sourceSelect = document.getElementById('source-select');
     const repoInput = document.getElementById('repo-input');
     const patInput = document.getElementById('pat-input');
+
+    if (sourceSelect) sourceSelect.value = state.gitSource;
     if (repoInput && document.activeElement !== repoInput) repoInput.value = state.repo;
     if (patInput && document.activeElement !== patInput) patInput.value = state.pat;
+    updateSourceUI();
   }
 
   function renderRateLimit() {
@@ -829,10 +810,14 @@
     if (!pill) return;
     if (state.rateLimit.remaining !== null) {
       pill.style.display = 'inline-flex';
-      pill.innerHTML = `<span>API Quota:</span> <strong>${state.rateLimit.remaining.toLocaleString()} / ${state.rateLimit.limit.toLocaleString()}</strong>`;
+      const label = state.gitSource === 'gitlab' ? 'GitLab API' : 'GitHub API';
+      pill.innerHTML = `<span>${label}:</span> <strong>${state.rateLimit.remaining.toLocaleString()} / ${state.rateLimit.limit.toLocaleString()}</strong>`;
       if (state.rateLimit.remaining < 50) {
         pill.style.borderColor = '#f43f5e';
         pill.style.color = '#fecdd3';
+      } else {
+        pill.style.borderColor = '';
+        pill.style.color = '';
       }
     } else {
       pill.style.display = 'none';
@@ -856,11 +841,7 @@
       state.selectedBranches.push(branchName);
     }
     renderSubToolbar();
-    if (!state.isDemo) {
-      fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
-    } else {
-      renderGraph();
-    }
+    fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
   }
 
   function renderSubToolbar() {
@@ -991,8 +972,7 @@
                 ${branchQuery ? `<span class="column-search-matches">${branchMatchCount} match${branchMatchCount !== 1 ? 'es' : ''}</span>` : ''}
                 <button class="column-search-close" data-branch="${escapeHtml(bName)}" title="Close branch search">&times;</button>
               </div>
-            ` : ''}
-
+            ` : ''}\n
             <div class="column-header-sub">
               ${headCommit ? `<span>HEAD: <code class="sha-mini">${headCommit.shortSha}</code></span> &bull; <span>${formatRelativeDate(headCommit.date)}</span>` : ''}
             </div>
@@ -1178,12 +1158,30 @@
         `;
       }
 
+      const isReachedBottom = state.branchReachedBottom.has(bName);
       const isLoadingMore = state.branchLoadingMore.has(bName);
+
+      let footerBtnHtml = '';
+      if (isReachedBottom) {
+        footerBtnHtml = `
+          <button class="btn-load-more-commits reached-bottom" data-branch="${escapeHtml(bName)}" disabled title="Branch root reached. No earlier commits exist.">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style="margin-right:6px;">
+              <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path>
+            </svg>
+            <span>Branch Root Reached</span>
+          </button>
+        `;
+      } else {
+        footerBtnHtml = `
+          <button class="btn-load-more-commits" data-branch="${escapeHtml(bName)}" ${isLoadingMore ? 'disabled' : ''}>
+            ${isLoadingMore ? '<span>Loading commits...</span>' : `<span>&darr; Load More Commits (+${state.commitsDepth})</span>`}
+          </button>
+        `;
+      }
+
       boardHtml += `
             <div class="column-footer-actions">
-              <button class="btn-load-more-commits" data-branch="${escapeHtml(bName)}" ${isLoadingMore ? 'disabled' : ''}>
-                ${isLoadingMore ? '<span>Loading commits...</span>' : `<span>&darr; Load More Commits (+${state.commitsDepth})</span>`}
-              </button>
+              ${footerBtnHtml}
             </div>
           </div>
         </div>
@@ -1348,12 +1346,14 @@
       });
     });
 
-    // Load More Commits button click
-    document.querySelectorAll('.btn-load-more-commits').forEach(btn => {
+    // Load More Commits button click (ignore if reached bottom)
+    document.querySelectorAll('.btn-load-more-commits:not(.reached-bottom)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const bName = btn.getAttribute('data-branch');
-        if (bName) loadMoreCommits(bName);
+        if (bName && !state.branchReachedBottom.has(bName)) {
+          loadMoreCommits(bName);
+        }
       });
     });
 
@@ -1393,6 +1393,11 @@
 
     const c = state.selectedCommit;
     const color = getBranchColor(c.branch || state.selectedBranches[0]);
+    const isGitLab = state.gitSource === 'gitlab';
+    const commitUrl = isGitLab
+      ? `${state.repoInfo?.web_url || (state.gitHost || 'https://gitlab.com') + '/' + state.repo}/-/commit/${c.sha}`
+      : `https://github.com/${state.repo}/commit/${c.sha}`;
+    const sourceLabel = isGitLab ? 'GitLab' : 'GitHub';
 
     drawer.innerHTML = `
       <div class="drawer-header">
@@ -1445,14 +1450,10 @@
       </div>
 
       <div style="margin-top:auto; padding-top:16px;">
-        ${!state.isDemo ? `
-          <a class="btn btn-primary" style="width:100%; justify-content:center;" 
-             href="https://github.com/${state.repo}/commit/${c.sha}" target="_blank" rel="noopener">
-            View on GitHub &rarr;
-          </a>
-        ` : `
-          <div style="font-size:11px; text-align:center; color:var(--text-dim);">Offline Demo Mode &bull; Simulated Commit</div>
-        `}
+        <a class="btn btn-primary" style="width:100%; justify-content:center;" 
+           href="${escapeHtml(commitUrl)}" target="_blank" rel="noopener">
+          View on ${sourceLabel} &rarr;
+        </a>
       </div>
     `;
 
@@ -1509,7 +1510,7 @@
 
       listContainer.innerHTML = filtered.map(b => {
         const isSelected = state.selectedBranches.includes(b.name);
-        const isPrimaryDefault = ['master', 'main'].includes(b.name.toLowerCase());
+        const isPrimaryDefault = ['master', 'main'].includes(b.name.toLowerCase()) || b.default;
         const isSecondaryDefault = ['dev', 'develop'].includes(b.name.toLowerCase());
         let badge = '';
         if (isPrimaryDefault) badge = '<span class="badge badge-head-main" style="margin-left:6px; font-size:9px;">Default</span>';
@@ -1552,12 +1553,35 @@
 
   // --- INITIALIZATION ---
   function init() {
+    const sourceSelect = document.getElementById('source-select');
     const repoInput = document.getElementById('repo-input');
     const patInput = document.getElementById('pat-input');
     const btnLoadRepo = document.getElementById('btn-load-repo');
-    const btnLoadDemo = document.getElementById('btn-load-demo');
     const btnExpandAll = document.getElementById('btn-expand-all');
     const btnCollapseAll = document.getElementById('btn-collapse-all');
+
+    if (sourceSelect) {
+      sourceSelect.value = state.gitSource;
+      sourceSelect.addEventListener('change', (e) => {
+        const newSource = e.target.value;
+        state.gitSource = newSource;
+        localStorage.setItem('git_source', newSource);
+        updateSourceUI();
+
+        // If repository field matches default of opposite source, switch to reasonable default
+        if (newSource === 'gitlab' && (!repoInput?.value || repoInput.value === 'herdrdev/herdr')) {
+          state.repo = 'gitlab-org/gitlab-runner';
+          if (repoInput) repoInput.value = state.repo;
+        } else if (newSource === 'github' && (!repoInput?.value || repoInput.value === 'gitlab-org/gitlab-runner')) {
+          state.repo = 'herdrdev/herdr';
+          if (repoInput) repoInput.value = state.repo;
+        }
+
+        if (state.repo) {
+          loadRepository(state.repo);
+        }
+      });
+    }
 
     if (patInput) {
       patInput.addEventListener('change', (e) => {
@@ -1576,19 +1600,11 @@
     if (btnLoadRepo) {
       btnLoadRepo.addEventListener('click', () => {
         const repoVal = repoInput ? repoInput.value.trim() : '';
-        if (!repoVal || !repoVal.includes('/')) {
-          alert('Please enter a valid GitHub repository in "owner/repo" format (e.g. herdrdev/herdr)');
+        if (!repoVal) {
+          alert('Please enter a repository (e.g. "owner/repo" or full URL)');
           return;
         }
-        state.repo = repoVal;
-        localStorage.setItem('git_repo', state.repo);
-        loadRepository(state.repo);
-      });
-    }
-
-    if (btnLoadDemo) {
-      btnLoadDemo.addEventListener('click', () => {
-        loadDemoMode();
+        loadRepository(repoVal);
       });
     }
 
@@ -1637,7 +1653,7 @@
       commitDepthSelect.value = state.commitsDepth.toString();
       commitDepthSelect.addEventListener('change', (e) => {
         state.commitsDepth = parseInt(e.target.value, 10);
-        if (!state.isDemo && state.repo) {
+        if (state.repo) {
           fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
         } else {
           renderGraph();
@@ -1719,26 +1735,12 @@
       });
     }
 
-    // Start with offline demo data initially
-    loadDemoMode();
-  }
+    updateSourceUI();
 
-  function loadDemoMode() {
-    state.isDemo = true;
-    state.repo = 'ilay515/demo-repo';
-    const demo = generateDemoData();
-    state.branches = demo.branches;
-    state.selectedBranches = ['main', 'develop', 'feature/auth'];
-    state.commitsMap.clear();
-    demo.commits.forEach(c => state.commitsMap.set(c.sha, c));
-    state.branchOrigins.clear();
-    if (demo.origins) {
-      demo.origins.forEach(o => state.branchOrigins.set(o.branch, { commitSha: o.commitSha, parentBranch: o.parentBranch }));
+    // Directly fetch from Git source
+    if (state.repo) {
+      loadRepository(state.repo);
     }
-    state.expandedChains.clear();
-    state.selectedCommit = null;
-    renderStatus('Loaded demo repository with 3 branches: main (20), develop (20), feature/auth (8)');
-    renderApp();
   }
 
   // --- HELPERS ---
