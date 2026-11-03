@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitBranch Lens &bull; Divergence &amp; Collapsed Commit Viewer</title>
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Glass Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">&#x2442;</div>
+      <div>
+        <div class="brand-title">GitBranch Lens</div>
+        <div class="brand-desc">Client-Only Divergence &amp; Collapsed Commit Viewer</div>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <div class="input-group">
+        <label for="repo-input">Repo:</label>
+        <input type="text" id="repo-input" placeholder="owner/repo" spellcheck="false" autocomplete="off">
+      </div>
+
+      <div class="input-group">
+        <label for="pat-input">PAT:</label>
+        <input type="password" id="pat-input" placeholder="ghp_••••••••••" spellcheck="false" autocomplete="off" title="GitHub Personal Access Token (stored client-side in session only)">
+      </div>
+
+      <button class="btn btn-primary" id="btn-load-repo">Load</button>
+      <button class="btn btn-demo" id="btn-load-demo" title="Explore sample repository graph without entering a token">Load Demo</button>
+    </div>
+  </header>
+
+  <!-- Sub-Toolbar: Branches, Collapsing & API Status -->
+  <div class="sub-toolbar">
+    <div class="branch-chips-area" id="branch-chips-area">
+      <!-- Injected branch pills -->
+    </div>
+
+    <div class="graph-actions">
+      <div class="rate-limit-pill" id="rate-limit-pill" style="display: none;">
+        <!-- Injected rate limit -->
+      </div>
+
+      <div class="toggle-group">
+        <button class="toggle-btn" id="btn-collapse-all" title="Collapse linear intermediate commits">Collapse All</button>
+        <button class="toggle-btn" id="btn-expand-all" title="Expand all commit chains">Expand All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Viewport -->
+  <main class="main-layout">
+    <div class="viewport">
+      <div class="status-banner">
+        <span class="status-tag" id="status-text">&#x2714; Interactive Demo Mode Loaded</span>
+        <span style="font-size:11px; color:#64748b;">Branches show tips &amp; fork/diversion points by default</span>
+      </div>
+
+      <div id="graph-viewport">
+        <!-- Injected graph nodes -->
+      </div>
+    </div>
+
+    <!-- Slide-Over Commit Inspector Drawer -->
+    <aside class="inspector-drawer" id="inspector-drawer">
+      <!-- Injected commit details -->
+    </aside>
+  </main>
+
+  <!-- Branch Picker Modal -->
+  <div class="modal-overlay" id="branch-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h4 style="font-size:14px; font-weight:600;">Select Branches to Compare</h4>
+        <button class="btn-close" id="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="branch-search-input" id="modal-branch-search" placeholder="Filter branches (e.g. main, dev, feature)...">
+        <div id="modal-branch-list" style="display:flex; flex-direction:column; gap:6px;">
+          <!-- Branch items -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
