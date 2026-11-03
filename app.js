@@ -61,101 +61,118 @@
     const hour = 3600 * 1000;
     const day = 24 * hour;
 
-    // Common Ancestor (Fork Point on master)
+    // Common Ancestor (Fork Point: Commit 10 on main)
     const forkCommit = {
-      sha: '241b99cd397bb642',
-      shortSha: '241b99c',
-      message: 'refactor: share cli and api command contracts (#5212)\n\nUnify protocol dispatch between client and daemon.',
-      author: { name: 'Ilay', login: 'ilay', avatar: 'https://avatars.githubusercontent.com/u/1000' },
-      date: new Date(now - 7 * day).toISOString(),
-      parents: ['10a9b11'],
-      branch: 'master',
-      stats: { additions: 154, deletions: 42 },
+      sha: '056af4c8b21901a',
+      shortSha: '056af4c',
+      message: 'feat(core): commit 10 on main branch\n\nStable release milestone where develop diverged.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+      date: new Date(now - 10 * day).toISOString(),
+      parents: ['3e1dedd9'],
+      branch: 'main',
+      stats: { additions: 140, deletions: 32 },
       isForkPoint: true,
-      forkChildren: ['master', 'dev'],
+      forkChildren: ['main', 'develop'],
     };
 
-    // Commits on master
-    const masterIntermediate = [];
-    for (let i = 1; i <= 14; i++) {
-      masterIntermediate.push({
-        sha: `m${i}a01f83c9${i}`,
-        shortSha: `m${i}a01f8`,
-        message: `chore: maintenance patchline #${1040 + i}`,
-        author: { name: 'Adam Wathan', login: 'adamwathan', avatar: 'https://avatars.githubusercontent.com/u/4323180' },
-        date: new Date(now - (6 * day) + (i * 8 * hour)).toISOString(),
-        parents: [i === 1 ? forkCommit.sha : `m${i-1}a01f83c9${i-1}`],
-        branch: 'master',
-        stats: { additions: 12 + i, deletions: 3 },
+    // Commits on main after fork point (commits 11 to 19: 9 intermediate commits)
+    const mainIntermediate = [];
+    for (let i = 11; i <= 19; i++) {
+      mainIntermediate.push({
+        sha: `m${i}c01f83c9${i}`,
+        shortSha: `m${i}c01f8`,
+        message: `feat(core): commit ${i} on main branch`,
+        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+        date: new Date(now - (10 * day) + ((i - 10) * 8 * hour)).toISOString(),
+        parents: [i === 11 ? forkCommit.sha : `m${i-1}c01f83c9${i-1}`],
+        branch: 'main',
+        stats: { additions: 15 + i, deletions: 4 },
       });
     }
 
-    const masterHead = {
-      sha: 'ee5bfb5041bb3e4a',
-      shortSha: 'ee5bfb5',
-      message: 'chore: point agents at the source instead of agent-guide and llms.txt\n\nSimplifies prompt context ingestion across provider delegates.',
-      author: { name: 'Adam Wathan', login: 'adamwathan', avatar: 'https://avatars.githubusercontent.com/u/4323180' },
+    // Commit 20 on main (HEAD)
+    const mainHead = {
+      sha: 'b721c5e9a01f844',
+      shortSha: 'b721c5e',
+      message: 'feat(core): commit 20 on main branch\n\nLatest stable production deployment on main.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
       date: new Date(now - 1 * day).toISOString(),
-      parents: [masterIntermediate[masterIntermediate.length - 1].sha],
-      branch: 'master',
-      stats: { additions: 18, deletions: 4 },
+      parents: [mainIntermediate[mainIntermediate.length - 1].sha],
+      branch: 'main',
+      stats: { additions: 24, deletions: 6 },
       isHead: true,
     };
 
-    // Commits on dev after fork point
-    const devDiversionStart = {
-      sha: '289f3d79f03d881',
-      shortSha: '289f3d7',
-      message: 'fix: retry a reconnecting machine immediately when selected\n\nBypasses the reconnect delay when the user clicks.',
-      author: { name: 'Jordan Pittman', login: 'reinink', avatar: 'https://avatars.githubusercontent.com/u/882133' },
-      date: new Date(now - 5 * day).toISOString(),
-      parents: [forkCommit.sha],
-      branch: 'dev',
-      stats: { additions: 64, deletions: 8 },
-      isDiversionStart: true,
-    };
-
-    const devIntermediate = [];
-    for (let i = 1; i <= 28; i++) {
-      devIntermediate.push({
-        sha: `d${i}b48f912e${i}`,
-        shortSha: `d${i}b48f9`,
-        message: `feat(core): client streaming optimization step ${i}`,
-        author: { name: 'Jordan Pittman', login: 'reinink', avatar: 'https://avatars.githubusercontent.com/u/882133' },
-        date: new Date(now - (4 * day) + (i * 3 * hour)).toISOString(),
-        parents: [i === 1 ? devDiversionStart.sha : `d${i-1}b48f912e${i-1}`],
-        branch: 'dev',
-        stats: { additions: 25 + i, deletions: 10 },
+    // Commits on main before fork point (commits 1 to 9: 9 base commits)
+    const mainBase = [];
+    for (let i = 1; i <= 9; i++) {
+      mainBase.push({
+        sha: `b${i}a60b2c1${i}`,
+        shortSha: `b${i}a60b2`,
+        message: `feat(core): commit ${i} on main branch`,
+        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+        date: new Date(now - (15 * day) + (i * 8 * hour)).toISOString(),
+        parents: [i === 1 ? 'initial' : `b${i-1}a60b2c1${i-1}`],
+        branch: 'main',
+        stats: { additions: 20 + i, deletions: 2 },
       });
     }
 
+    // 20 Additional commits on develop (Commit 1: Diversion start)
+    const devDiversionStart = {
+      sha: 'b9845ba023819e1',
+      shortSha: 'b9845ba',
+      message: 'feat(develop): additional commit 1 on develop branch\n\nFirst commit branched off main fork point.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+      date: new Date(now - 9 * day).toISOString(),
+      parents: [forkCommit.sha],
+      branch: 'develop',
+      stats: { additions: 55, deletions: 12 },
+      isDiversionStart: true,
+    };
+
+    // Additional commits 2 to 19 on develop (18 intermediate commits)
+    const devIntermediate = [];
+    for (let i = 2; i <= 19; i++) {
+      devIntermediate.push({
+        sha: `d${i}6c78f5e${i}`,
+        shortSha: `d${i}6c78f`,
+        message: `feat(develop): additional commit ${i} on develop branch`,
+        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+        date: new Date(now - (9 * day) + ((i - 1) * 8 * hour)).toISOString(),
+        parents: [i === 2 ? devDiversionStart.sha : `d${i-1}6c78f5e${i-1}`],
+        branch: 'develop',
+        stats: { additions: 30 + i, deletions: 5 },
+      });
+    }
+
+    // Additional commit 20 on develop (HEAD)
     const devHead = {
-      sha: '870b92c63d890ac',
-      shortSha: '870b92c',
-      message: 'fix: retry the active SSH machine when selected\n\nEnsures reconnect state refreshes immediately upon active tab focus.',
-      author: { name: 'Adam Wathan', login: 'adamwathan', avatar: 'https://avatars.githubusercontent.com/u/4323180' },
+      sha: '6c78f5e93d8101a',
+      shortSha: '6c78f5e',
+      message: 'feat(develop): additional commit 20 on develop branch\n\nLatest staging feature implementation on develop.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
       date: new Date(now - 2 * hour).toISOString(),
       parents: [devIntermediate[devIntermediate.length - 1].sha],
-      branch: 'dev',
-      stats: { additions: 142, deletions: 18 },
+      branch: 'develop',
+      stats: { additions: 110, deletions: 14 },
       isHead: true,
     };
 
     return {
       branches: [
-        { name: 'master', commit: { sha: masterHead.sha } },
-        { name: 'dev', commit: { sha: devHead.sha } },
-        { name: 'main', commit: { sha: masterHead.sha } },
-        { name: 'akbash/828-remote-drag-image-path', commit: { sha: '3cad23e' } },
-        { name: '4721', commit: { sha: devHead.sha } },
+        { name: 'main', commit: { sha: mainHead.sha } },
+        { name: 'develop', commit: { sha: devHead.sha } },
+        { name: 'master', commit: { sha: mainHead.sha } },
       ],
       commits: [
         devHead,
         ...devIntermediate.reverse(),
         devDiversionStart,
-        masterHead,
-        ...masterIntermediate.reverse(),
+        mainHead,
+        ...mainIntermediate.reverse(),
         forkCommit,
+        ...mainBase.reverse(),
       ],
     };
   }
@@ -362,98 +379,135 @@
 
   // --- DIVERSION & COLLAPSE ALGORITHM ---
   function computeDisplayRows() {
-    const commits = Array.from(state.commitsMap.values());
-    if (commits.length === 0) return [];
-
-    // Sort chronologically newest first
-    commits.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const allCommits = Array.from(state.commitsMap.values());
+    if (allCommits.length === 0) return [];
 
     // Identify merge commits
-    commits.forEach(c => {
+    allCommits.forEach(c => {
       if (c.parents && c.parents.length > 1) {
         c.isMerge = true;
       }
-    });
-
-    // Mark anchors: HEADs, Fork points, Diversion starts, Merges
-    commits.forEach(c => {
       c.isAnchor = Boolean(c.isHead || c.isForkPoint || c.isDiversionStart || c.isMerge);
     });
 
     if (state.filterMode === 'all') {
-      return commits.map(c => ({ type: 'commit', commit: c, branch: c.branch }));
+      const sorted = [...allCommits].sort((a, b) => new Date(b.date) - new Date(a.date));
+      return sorted.map(c => ({ type: 'commit', commit: c, branch: c.branch }));
     }
 
-    // Collapse linear chains between anchors
     const rows = [];
-    let currentChain = [];
+    const baseBranch = state.selectedBranches[0];
+    const childBranches = state.selectedBranches.slice(1);
 
-    function flushChain() {
-      if (currentChain.length === 0) return;
+    // 1. Process child branches (e.g. develop / feature branches)
+    childBranches.forEach(bName => {
+      const bCommits = allCommits.filter(c => c.branch === bName);
+      bCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      if (currentChain.length <= 1) {
-        currentChain.forEach(c => rows.push({ type: 'commit', commit: c, branch: c.branch }));
+      let currentChain = [];
+
+      function flushBChain() {
+        if (currentChain.length === 0) return;
+        if (currentChain.length <= 1) {
+          currentChain.forEach(c => rows.push({ type: 'commit', commit: c, branch: bName }));
+        } else {
+          const chainId = `chain-${currentChain[0].sha}-${currentChain[currentChain.length - 1].sha}`;
+          const isExpanded = state.expandedChains.has(chainId);
+          let totalAdd = 0;
+          let totalDel = 0;
+          const authors = new Set();
+          currentChain.forEach(c => {
+            if (c.stats) {
+              totalAdd += c.stats.additions || 0;
+              totalDel += c.stats.deletions || 0;
+            }
+            if (c.author?.name) authors.add(c.author.name);
+          });
+          rows.push({
+            type: 'collapsed',
+            chainId,
+            commits: [...currentChain],
+            count: currentChain.length,
+            branch: bName,
+            startSha: currentChain[0].shortSha,
+            endSha: currentChain[currentChain.length - 1].shortSha,
+            totalAdd,
+            totalDel,
+            authorsCount: authors.size,
+            isExpanded,
+          });
+        }
+        currentChain = [];
+      }
+
+      bCommits.forEach(c => {
+        if (c.isAnchor) {
+          flushBChain();
+          rows.push({ type: 'commit', commit: c, branch: bName });
+        } else {
+          currentChain.push(c);
+        }
+      });
+      flushBChain();
+    });
+
+    // 2. Process base branch (e.g. main / master)
+    const baseCommits = allCommits.filter(c => c.branch === baseBranch || (!childBranches.includes(c.branch) && !c.branch));
+    baseCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    let baseChain = [];
+    function flushBaseChain() {
+      if (baseChain.length === 0) return;
+      if (baseChain.length <= 1) {
+        baseChain.forEach(c => rows.push({ type: 'commit', commit: c, branch: baseBranch }));
       } else {
-        const chainId = `chain-${currentChain[0].sha}-${currentChain[currentChain.length - 1].sha}`;
+        const chainId = `chain-${baseChain[0].sha}-${baseChain[baseChain.length - 1].sha}`;
         const isExpanded = state.expandedChains.has(chainId);
-        const branchName = currentChain[0].branch || state.selectedBranches[0];
-
         let totalAdd = 0;
         let totalDel = 0;
         const authors = new Set();
-        currentChain.forEach(c => {
+        baseChain.forEach(c => {
           if (c.stats) {
             totalAdd += c.stats.additions || 0;
             totalDel += c.stats.deletions || 0;
           }
           if (c.author?.name) authors.add(c.author.name);
         });
-
         rows.push({
           type: 'collapsed',
           chainId,
-          commits: [...currentChain],
-          count: currentChain.length,
-          branch: branchName,
-          startSha: currentChain[0].shortSha,
-          endSha: currentChain[currentChain.length - 1].shortSha,
+          commits: [...baseChain],
+          count: baseChain.length,
+          branch: baseBranch,
+          startSha: baseChain[0].shortSha,
+          endSha: baseChain[baseChain.length - 1].shortSha,
           totalAdd,
           totalDel,
           authorsCount: authors.size,
           isExpanded,
         });
       }
-      currentChain = [];
+      baseChain = [];
     }
 
-    for (let i = 0; i < commits.length; i++) {
-      const c = commits[i];
-
+    baseCommits.forEach(c => {
       if (c.isAnchor) {
-        flushChain();
-        rows.push({ type: 'commit', commit: c, branch: c.branch });
+        flushBaseChain();
+        rows.push({ type: 'commit', commit: c, branch: baseBranch });
       } else {
-        if (currentChain.length > 0 && currentChain[0].branch !== c.branch) {
-          flushChain();
-        }
-        currentChain.push(c);
+        baseChain.push(c);
       }
-    }
+    });
+    flushBaseChain();
 
-    flushChain();
-
-    // If compare reported behind_by commits on base branch that weren't individually downloaded,
-    // ensure a clean collapsed marker is present between base HEAD and merge_base
+    // If compare reported behind_by commits on base branch that weren't individually downloaded
     if (state.behindByCount && state.behindByCount > 0 && state.selectedBranches.length === 2) {
-      const baseBranch = state.selectedBranches[0];
       const hasBaseCollapsed = rows.some(r => r.type === 'collapsed' && r.branch === baseBranch);
-      const hasBaseHead = rows.some(r => r.type === 'commit' && r.commit.isHead && r.commit.branch === baseBranch);
       const hasFork = rows.some(r => r.type === 'commit' && r.commit.isForkPoint);
 
-      if (!hasBaseCollapsed && hasBaseHead && hasFork) {
-        // Find position of fork commit and inject behind_by collapsed block right above it
+      if (!hasBaseCollapsed && hasFork) {
         const forkIdx = rows.findIndex(r => r.type === 'commit' && r.commit.isForkPoint);
-        if (forkIdx > 0) {
+        if (forkIdx >= 0) {
           const synthChainId = `chain-synth-behind-${baseBranch}`;
           rows.splice(forkIdx, 0, {
             type: 'collapsed',
@@ -1150,15 +1204,15 @@
 
   function loadDemoMode() {
     state.isDemo = true;
-    state.repo = 'herdrdev/herdr (Demo)';
+    state.repo = 'demo-repo (20 main + 20 develop)';
     const demo = generateDemoData();
     state.branches = demo.branches;
-    state.selectedBranches = ['master', 'dev'];
+    state.selectedBranches = ['main', 'develop'];
     state.commitsMap.clear();
     demo.commits.forEach(c => state.commitsMap.set(c.sha, c));
     state.expandedChains.clear();
     state.selectedCommit = null;
-    renderStatus('Loaded interactive demo comparing master and dev with full diversion curves and commit collapse');
+    renderStatus('Loaded demo repository with 20 commits on main and 20 additional commits on develop');
     renderApp();
   }
 
