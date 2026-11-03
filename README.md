@@ -1,46 +1,32 @@
-<img src="assets/icon.svg" width="64" height="64" alt="GitBranch Lens Icon">
-
 # GitBranch Lens
 
-A client-only single-page web app for inspecting Git branches with **smart commit collapsing**. 
+A client-only single-page web app for inspecting Git branches with **multi-column swimlanes** and **smart commit collapsing**.
 
-Standard Git graph viewers bury branch relationships under hundreds of linear commits. GitBranch Lens reduces visual clutter by keeping linear intermediate commits collapsed, highlighting only the **branch tips (HEADs)** and **anchors near branch diversions** (fork points / common ancestors, first commits on diverged branches, and merge commits).
+![GitBranch Lens Screenshot](screenshot.png)
 
-By default, it focuses on comparing `main` and `dev`.
+Standard Git viewers bury branch relationships under hundreds of linear commits. GitBranch Lens separates each branch into its own dedicated column, keeping linear intermediate commits collapsed so you can immediately see the **branch tips (HEADs)**, **common ancestors (fork points)**, and **where branches diverged**.
 
 ---
 
 ## Features
 
-- **Client-Only Architecture**: Zero server requirements. Runs directly from `index.html` in any modern web browser or can be served via static file servers (`npm run dev`, `npx serve .`).
-- **Focus on Diversions**:
-  - Automatically identifies branch heads (`HEAD(main)`, `HEAD(dev)`).
-  - Pinpoints common ancestors (merge base / fork point) where branches split.
-  - Highlights initial diversion commits (first commit on a branch after branching off).
-  - Automatically collapses intermediate linear commits into expandable summary badges (`··· 32 commits collapsed ···`).
-- **Personal Access Token (PAT) Support**:
-  - Direct integration with GitHub's REST API.
-  - Stored strictly client-side (`sessionStorage` / optional `localStorage`).
-  - Real-time API rate limit tracker (`4,980 / 5,000 req/hr`).
-- **Interactive Offline Demo Mode**:
-  - Includes built-in simulated Git graph data with `main`, `dev`, `feature/tokens`, and `v3-legacy` branches.
-  - Allows immediate testing and exploration without requiring any GitHub token or network connection.
-- **Dynamic Branch Multi-Select**:
-  - Defaults to `main` and `dev` (or `master` and `develop`).
-  - Searchable branch picker modal allows adding any arbitrary remote branch to the view.
-- **Slide-Over Commit Inspector**:
-  - Click any commit card or dot to view full commit message, author info, SHA copy button, parent commit navigation, and GitHub link.
-- **Apple Fluid Design System**:
-  - Frosted glassmorphism header (`backdrop-filter: blur(20px)`).
-  - Smooth SVG Bézier curves connecting commits across branch tracks.
-  - Spring-feel interactive feedback on buttons, cards, and modal dialogs.
+- **Multi-Column Swimlane Layout**: Each branch has its own dedicated column. Commit messages and cards are cleanly separated and never cramped together.
+- **Direct Branch Disable / Enable**: Toggle any branch on or off directly from the column header (`×`) or the main toolbar pills.
+- **Smart Commit Collapsing**: Intermediate linear commits are collapsed into compact capsules (`... 18 commits collapsed ...`). Expand or fold them with a single click.
+- **Visual Divergence & Cross-Column Connectors**:
+  - Highlights common ancestors and fork points where branches branched off.
+  - Smooth Bézier SVG arcs bridge between columns to show divergence paths.
+  - Origin banners (e.g. `↳ Branched from develop @ a81491e`) link directly to the parent commit.
+- **Commit Inspector Drawer**: Click any commit to view full details, diff statistics, author info, SHA copy tool, and direct GitHub links.
+- **Interactive Offline Demo Mode**: Explore sample multi-branch repositories (`main`, `develop`, `feature/auth`) without requiring a token or network connection.
+- **GitHub REST API Integration**: Enter any public repository (`owner/repo`) or add a Personal Access Token (PAT) for private repos and higher rate limits.
 
 ---
 
-## Getting Started
+## Quick Start
 
-### 1. Direct Browser Usage (Zero Install)
-Simply open `index.html` in your favorite web browser:
+### Direct Browser Usage (Zero Dependencies)
+Simply open `index.html` in any browser:
 ```bash
 # Linux
 xdg-open index.html
@@ -49,17 +35,14 @@ xdg-open index.html
 open index.html
 ```
 
-### 2. Local Dev Server (Optional)
+### Local Static Server (Optional)
 ```bash
-# Start with Vite or any static server
-npm run dev
-# or
 npx serve .
+# or
+npm run dev
 ```
 
 ---
 
-## Security & Privacy
-
-- All GitHub API calls are made directly from the user's browser to `https://api.github.com`.
-- No backend proxies, analytics, or third-party servers receive your PAT or repository code.
+## License
+MIT
