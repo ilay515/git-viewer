@@ -220,14 +220,59 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
   user-select: none;
+  border: 1px solid transparent;
 }
 
 .branch-pill.active {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
-.branch-pill:hover {
+.branch-pill.active:hover {
   transform: translateY(-1px);
+}
+
+.branch-pill.inactive {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--border-card);
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.branch-pill.inactive:hover {
+  opacity: 1;
+  border-color: var(--color-main);
+  color: var(--text-main);
+  background: rgba(99, 102, 241, 0.1);
+  transform: translateY(-1px);
+}
+
+.pill-remove-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0 2px;
+  margin-left: 2px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.pill-remove-btn:hover {
+  opacity: 1;
+  transform: scale(1.25);
+  color: #f87171;
+}
+
+.pill-remove-btn:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .pill-dot {

@@ -133,17 +133,25 @@
 
     // Additional commits 2 to 19 on develop (18 intermediate commits)
     const devIntermediate = [];
+    let devForkForAuth = null;
     for (let i = 2; i <= 19; i++) {
-      devIntermediate.push({
+      const isForkForAuth = (i === 10);
+      const commitObj = {
         sha: `d${i}6c78f5e${i}`,
         shortSha: `d${i}6c78f`,
-        message: `feat(develop): additional commit ${i} on develop branch`,
+        message: isForkForAuth
+          ? 'feat(develop): additional commit 10 on develop branch\n\nBranch point for feature/auth token subsystem.'
+          : `feat(develop): additional commit ${i} on develop branch`,
         author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
         date: new Date(now - (9 * day) + ((i - 1) * 8 * hour)).toISOString(),
         parents: [i === 2 ? devDiversionStart.sha : `d${i-1}6c78f5e${i-1}`],
         branch: 'develop',
         stats: { additions: 30 + i, deletions: 5 },
-      });
+        isForkPoint: isForkForAuth,
+        forkChildren: isForkForAuth ? ['develop', 'feature/auth'] : undefined,
+      };
+      if (isForkForAuth) devForkForAuth = commitObj;
+      devIntermediate.push(commitObj);
     }
 
     // Additional commit 20 on develop (HEAD)
@@ -159,13 +167,55 @@
       isHead: true,
     };
 
+    // 3rd Branch: feature/auth (8 commits branching off commit 10 on develop)
+    const authDiversionStart = {
+      sha: '4fa439e9a1102b1',
+      shortSha: '4fa439e',
+      message: 'feat(auth): implement token authentication step 1\n\nInitial diversion from develop for OAuth2 token validation.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+      date: new Date(now - 4 * day).toISOString(),
+      parents: [devForkForAuth ? devForkForAuth.sha : forkCommit.sha],
+      branch: 'feature/auth',
+      stats: { additions: 75, deletions: 10 },
+      isDiversionStart: true,
+    };
+
+    const authIntermediate = [];
+    for (let i = 2; i <= 7; i++) {
+      authIntermediate.push({
+        sha: `a${i}4fa439e${i}`,
+        shortSha: `a${i}4fa43`,
+        message: `feat(auth): implement token authentication step ${i}`,
+        author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+        date: new Date(now - (4 * day) + ((i - 1) * 6 * hour)).toISOString(),
+        parents: [i === 2 ? authDiversionStart.sha : `a${i-1}4fa439e${i-1}`],
+        branch: 'feature/auth',
+        stats: { additions: 35 + i, deletions: 4 },
+      });
+    }
+
+    const authHead = {
+      sha: 'bb48b139384bc12',
+      shortSha: 'bb48b13',
+      message: 'feat(auth): implement token authentication step 8\n\nComplete OAuth2 session refresh integration.',
+      author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+      date: new Date(now - 1 * hour).toISOString(),
+      parents: [authIntermediate[authIntermediate.length - 1].sha],
+      branch: 'feature/auth',
+      stats: { additions: 92, deletions: 11 },
+      isHead: true,
+    };
+
     return {
       branches: [
         { name: 'main', commit: { sha: mainHead.sha } },
         { name: 'develop', commit: { sha: devHead.sha } },
-        { name: 'master', commit: { sha: mainHead.sha } },
+        { name: 'feature/auth', commit: { sha: authHead.sha } },
       ],
       commits: [
+        authHead,
+        ...authIntermediate.reverse(),
+        authDiversionStart,
         devHead,
         ...devIntermediate.reverse(),
         devDiversionStart,
@@ -564,12 +614,32 @@
     if (el) el.textContent = text;
   }
 
+  function toggleBranch(branchName) {
+    if (state.selectedBranches.includes(branchName)) {
+      if (state.selectedBranches.length > 1) {
+        state.selectedBranches = state.selectedBranches.filter(b => b !== branchName);
+      } else {
+        alert('At least one branch must remain visible.');
+        return;
+      }
+    } else {
+      state.selectedBranches.push(branchName);
+    }
+    renderSubToolbar();
+    if (!state.isDemo) {
+      fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
+    } else {
+      renderGraph();
+    }
+  }
+
   function renderSubToolbar() {
     const container = document.getElementById('branch-chips-area');
     if (!container) return;
 
-    container.innerHTML = `<span class="branch-chips-label">Visible:</span>`;
+    container.innerHTML = `<span class="branch-chips-label">Branches:</span>`;
 
+    // 1. Render active branches with interactive disable '×' button
     state.selectedBranches.forEach((branchName, idx) => {
       const color = getBranchColor(branchName, idx);
       const pill = document.createElement('div');
@@ -577,14 +647,44 @@
       pill.style.background = color.bg;
       pill.style.borderColor = color.color;
       pill.style.color = color.light;
-      pill.innerHTML = `<div class="pill-dot" style="background:${color.color}"></div><span>${escapeHtml(branchName)}</span>`;
+
+      const canDisable = state.selectedBranches.length > 1;
+      pill.innerHTML = `
+        <div class="pill-dot" style="background:${color.color}"></div>
+        <span>${escapeHtml(branchName)}</span>
+        <button class="pill-remove-btn" title="${canDisable ? `Disable ${escapeHtml(branchName)}` : 'At least one branch must remain visible'}" ${canDisable ? '' : 'disabled'}>&times;</button>
+      `;
+
+      const removeBtn = pill.querySelector('.pill-remove-btn');
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleBranch(branchName);
+      });
+
       container.appendChild(pill);
     });
 
+    // 2. Render quick-add chips for inactive branches directly on main screen
+    const inactiveBranches = state.branches
+      .map(b => b.name)
+      .filter(name => !state.selectedBranches.includes(name));
+
+    inactiveBranches.slice(0, 3).forEach(inactiveName => {
+      const chip = document.createElement('div');
+      chip.className = 'branch-pill inactive';
+      chip.title = `Enable ${escapeHtml(inactiveName)}`;
+      chip.innerHTML = `<span>+ ${escapeHtml(inactiveName)}</span>`;
+      chip.addEventListener('click', () => {
+        toggleBranch(inactiveName);
+      });
+      container.appendChild(chip);
+    });
+
+    // 3. More branches button
     const pickerBtn = document.createElement('button');
     pickerBtn.className = 'btn-branch-picker';
-    const totalCount = state.branches.length || (state.isDemo ? 5 : 0);
-    pickerBtn.innerHTML = `<span>+ Add branch (${totalCount})</span>`;
+    const totalCount = state.branches.length;
+    pickerBtn.innerHTML = `<span>+ All (${totalCount})</span>`;
     pickerBtn.onclick = () => openBranchPickerModal();
     container.appendChild(pickerBtn);
   }
@@ -1091,23 +1191,8 @@
       listContainer.querySelectorAll('.branch-item-row').forEach(row => {
         row.addEventListener('click', () => {
           const name = row.getAttribute('data-name');
-          if (state.selectedBranches.includes(name)) {
-            if (state.selectedBranches.length > 1) {
-              state.selectedBranches = state.selectedBranches.filter(b => b !== name);
-            } else {
-              alert('At least one branch must remain visible.');
-              return;
-            }
-          } else {
-            state.selectedBranches.push(name);
-          }
+          toggleBranch(name);
           renderList(searchInput ? searchInput.value : '');
-          renderSubToolbar();
-          if (!state.isDemo) {
-            fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
-          } else {
-            renderGraph();
-          }
         });
       });
     }
@@ -1218,15 +1303,15 @@
 
   function loadDemoMode() {
     state.isDemo = true;
-    state.repo = 'demo-repo (20 main + 20 develop)';
+    state.repo = 'ilay515/demo-repo';
     const demo = generateDemoData();
     state.branches = demo.branches;
-    state.selectedBranches = ['main', 'develop'];
+    state.selectedBranches = ['main', 'develop', 'feature/auth'];
     state.commitsMap.clear();
     demo.commits.forEach(c => state.commitsMap.set(c.sha, c));
     state.expandedChains.clear();
     state.selectedCommit = null;
-    renderStatus('Loaded demo repository with 20 commits on main and 20 additional commits on develop');
+    renderStatus('Loaded demo repository with 3 branches: main (20), develop (20), feature/auth (8)');
     renderApp();
   }
 
