@@ -10,6 +10,9 @@ Standard Git viewers bury branch relationships under hundreds of linear commits.
 
 ## Features
 
+- **Clean Developer UI**: Disciplined, distraction-free interface built with dark developer tokens, clear visual hierarchy, and zero gimmicky neon glows.
+- **Find Globally Tool (`/`)**: Search across all active branches by commit message, author name, or SHA hash. Features auto-expansion of collapsed chains containing matches, match counter, and prev/next navigation (`Enter` / `Shift+Enter`).
+- **Find Commit on Branch**: Inline search tool directly inside each branch column header. Quickly filter or highlight commits within a specific branch.
 - **Multi-Column Swimlane Layout**: Each branch has its own dedicated column. Commit messages and cards are cleanly separated and never cramped together.
 - **Direct Branch Disable / Enable**: Toggle any branch on or off directly from the column header (`×`) or the main toolbar pills.
 - **Smart Commit Collapsing**: Intermediate linear commits are collapsed into compact capsules (`... 18 commits collapsed ...`). Expand or fold them with a single click.

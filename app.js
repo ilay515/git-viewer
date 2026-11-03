@@ -19,18 +19,21 @@
     rateLimit: { remaining: null, limit: null },
     filterMode: 'smart',   // 'smart' (tips & diversions) | 'all'
     repoInfo: null,
+    globalSearchQuery: '',
+    globalSearchResults: [],
+    currentSearchIndex: -1,
+    branchSearchQueries: new Map(), // branchName -> query
+    activeBranchSearch: new Set(),  // set of branchNames with visible search input
   };
 
-  // Branch Color Palette
+  // Branch Color Palette (Clean Developer-Grade Colors)
   const PALETTE = [
-    { color: '#6366f1', light: '#a5b4fc', bg: 'rgba(99, 102, 241, 0.15)' }, // Indigo (main/master)
-    { color: '#10b981', light: '#6ee7b7', bg: 'rgba(16, 185, 129, 0.15)' }, // Emerald (dev/develop)
-    { color: '#f59e0b', light: '#fde68a', bg: 'rgba(245, 158, 11, 0.15)' }, // Amber
-    { color: '#06b6d4', light: '#67e8f9', bg: 'rgba(6, 182, 212, 0.15)' }, // Cyan
-    { color: '#f43f5e', light: '#fecdd3', bg: 'rgba(244, 63, 94, 0.15)' }, // Rose
-    { color: '#a855f7', light: '#e9d5ff', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
-    { color: '#84cc16', light: '#d9f99d', bg: 'rgba(132, 204, 22, 0.15)' }, // Lime
-    { color: '#ec4899', light: '#fbcfe8', bg: 'rgba(236, 72, 153, 0.15)' }, // Pink
+    { color: '#58a6ff', light: '#79c0ff', bg: 'rgba(56, 139, 253, 0.12)' }, // Blue (main/master)
+    { color: '#3fb950', light: '#56d364', bg: 'rgba(46, 160, 67, 0.12)' },  // Green (dev/develop)
+    { color: '#bc8cff', light: '#d2a8ff', bg: 'rgba(163, 113, 247, 0.12)' }, // Purple (features)
+    { color: '#d29922', light: '#e3b341', bg: 'rgba(210, 153, 34, 0.12)' },  // Amber (divergence)
+    { color: '#39c5cf', light: '#56d4dd', bg: 'rgba(57, 197, 207, 0.12)' }, // Cyan
+    { color: '#f778ba', light: '#ff9bce', bg: 'rgba(247, 120, 186, 0.12)' }, // Pink
   ];
 
   function getBranchColor(branchName, index = 0) {
@@ -529,6 +532,163 @@
     return null;
   }
 
+  // --- SEARCH ENGINE (Global & Per-Branch) ---
+  function matchCommit(commit, query) {
+    if (!query || !commit) return false;
+    const q = query.toLowerCase().trim();
+    if (!q) return false;
+    if (commit.sha && commit.sha.toLowerCase().includes(q)) return true;
+    if (commit.shortSha && commit.shortSha.toLowerCase().includes(q)) return true;
+    if (commit.message && commit.message.toLowerCase().includes(q)) return true;
+    if (commit.author?.name && commit.author.name.toLowerCase().includes(q)) return true;
+    if (commit.author?.login && commit.author.login.toLowerCase().includes(q)) return true;
+    return false;
+  }
+
+  function applyGlobalSearch(query) {
+    state.globalSearchQuery = (query || '').trim();
+    if (!state.globalSearchQuery) {
+      state.globalSearchResults = [];
+      state.currentSearchIndex = -1;
+      updateSearchNavUI();
+      renderGraph();
+      return;
+    }
+
+    // Auto-expand any collapsed chains containing matches
+    state.selectedBranches.forEach(bName => {
+      const rows = computeBranchDisplayRows(bName);
+      rows.forEach(row => {
+        if (row.type === 'collapsed') {
+          const hasMatchInChain = row.commits.some(c => matchCommit(c, state.globalSearchQuery));
+          if (hasMatchInChain) {
+            state.expandedChains.add(row.chainId);
+          }
+        }
+      });
+    });
+
+    // Collect all matches in selected branches in display order
+    const allCommits = Array.from(state.commitsMap.values());
+    const matches = [];
+    state.selectedBranches.forEach(bName => {
+      const bCommits = allCommits.filter(c => c.branch === bName);
+      bCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
+      bCommits.forEach(c => {
+        if (matchCommit(c, state.globalSearchQuery)) {
+          matches.push(c.sha);
+        }
+      });
+    });
+
+    state.globalSearchResults = matches;
+    state.currentSearchIndex = matches.length > 0 ? 0 : -1;
+    updateSearchNavUI();
+    renderGraph();
+
+    if (state.currentSearchIndex >= 0) {
+      focusCurrentSearchMatch();
+    }
+  }
+
+  function updateSearchNavUI() {
+    const clearBtn = document.getElementById('btn-clear-global-search');
+    const navControls = document.getElementById('search-nav-controls');
+    const countEl = document.getElementById('search-match-count');
+
+    if (!clearBtn || !navControls || !countEl) return;
+
+    if (state.globalSearchQuery) {
+      clearBtn.style.display = 'inline-block';
+      navControls.style.display = 'inline-flex';
+      const total = state.globalSearchResults.length;
+      if (total === 0) {
+        countEl.textContent = '0 matches';
+        countEl.style.color = 'var(--text-tertiary)';
+      } else {
+        countEl.textContent = `${state.currentSearchIndex + 1} of ${total} match${total > 1 ? 'es' : ''}`;
+        countEl.style.color = 'var(--branch-amber)';
+      }
+    } else {
+      clearBtn.style.display = 'none';
+      navControls.style.display = 'none';
+    }
+  }
+
+  function navigateSearchMatch(direction = 1) {
+    const total = state.globalSearchResults.length;
+    if (total === 0) return;
+    state.currentSearchIndex = (state.currentSearchIndex + direction + total) % total;
+    updateSearchNavUI();
+    renderGraph();
+    focusCurrentSearchMatch();
+  }
+
+  function focusCurrentSearchMatch() {
+    if (state.currentSearchIndex < 0 || state.currentSearchIndex >= state.globalSearchResults.length) return;
+    const targetSha = state.globalSearchResults[state.currentSearchIndex];
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`.column-timeline-item[data-sha="${targetSha}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+    });
+  }
+
+  function clearGlobalSearch() {
+    state.globalSearchQuery = '';
+    state.globalSearchResults = [];
+    state.currentSearchIndex = -1;
+    const input = document.getElementById('global-search-input');
+    if (input) input.value = '';
+    updateSearchNavUI();
+    renderGraph();
+  }
+
+  function toggleBranchSearch(branchName) {
+    if (state.activeBranchSearch.has(branchName)) {
+      state.activeBranchSearch.delete(branchName);
+      state.branchSearchQueries.delete(branchName);
+    } else {
+      state.activeBranchSearch.add(branchName);
+    }
+    renderGraph();
+    if (state.activeBranchSearch.has(branchName)) {
+      setTimeout(() => {
+        const inp = document.querySelector(`.column-search-input[data-branch="${branchName}"]`);
+        if (inp) {
+          inp.focus();
+          inp.select();
+        }
+      }, 50);
+    }
+  }
+
+  function setBranchSearchQuery(branchName, query) {
+    const q = (query || '').trim();
+    if (q) {
+      state.branchSearchQueries.set(branchName, q);
+      // Auto-expand any collapsed chains in this branch containing matches
+      const rows = computeBranchDisplayRows(branchName);
+      rows.forEach(row => {
+        if (row.type === 'collapsed') {
+          const hasMatch = row.commits.some(c => matchCommit(c, q));
+          if (hasMatch) state.expandedChains.add(row.chainId);
+        }
+      });
+    } else {
+      state.branchSearchQueries.delete(branchName);
+    }
+    renderGraph();
+    const inp = document.querySelector(`.column-search-input[data-branch="${branchName}"]`);
+    if (inp) {
+      inp.focus();
+      // restore cursor to end
+      const len = inp.value.length;
+      inp.setSelectionRange(len, len);
+    }
+  }
+
   // --- RENDER FUNCTIONS ---
   function renderApp() {
     renderHeader();
@@ -675,6 +835,10 @@
       const canDisable = state.selectedBranches.length > 1;
       const origin = findBranchOrigin(bName);
 
+      const isBranchSearchActive = state.activeBranchSearch.has(bName);
+      const branchQuery = state.branchSearchQueries.get(bName) || '';
+      const branchMatchCount = branchQuery ? bCommits.filter(c => matchCommit(c, branchQuery)).length : 0;
+
       boardHtml += `
         <div class="branch-column" data-branch="${escapeHtml(bName)}" style="--branch-accent:${color.color}; --rail-line-bg:linear-gradient(180deg, ${color.color}, rgba(255,255,255,0.06));">
           
@@ -682,15 +846,33 @@
           <div class="branch-column-header">
             <div class="column-header-top">
               <div class="column-header-title">
-                <div class="column-header-dot" style="background:${color.color}; box-shadow:0 0 10px ${color.color};"></div>
-                <span class="column-branch-name">${escapeHtml(bName)}</span>
+                <div class="column-header-dot" style="background:${color.color};"></div>
+                <span class="column-branch-name" title="${escapeHtml(bName)}">${escapeHtml(bName)}</span>
                 ${bIdx === 0 ? '<span class="badge badge-head-main" style="font-size:9px;">Base</span>' : ''}
               </div>
               <div class="column-header-actions">
+                <button class="column-search-toggle ${isBranchSearchActive ? 'active' : ''}" data-branch="${escapeHtml(bName)}" title="Find commit on ${escapeHtml(bName)}">
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
+                    <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+                  </svg>
+                  <span>Find</span>
+                </button>
                 <span class="column-commits-badge">${bCommits.length} commits</span>
                 <button class="column-close-btn" data-branch="${escapeHtml(bName)}" title="${canDisable ? `Disable ${escapeHtml(bName)} column` : 'At least one branch must remain visible'}" ${canDisable ? '' : 'disabled'}>&times;</button>
               </div>
             </div>
+
+            ${isBranchSearchActive ? `
+              <div class="column-inline-search">
+                <svg class="search-icon" viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
+                  <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+                </svg>
+                <input type="text" class="column-search-input" data-branch="${escapeHtml(bName)}" placeholder="Find in ${escapeHtml(bName)}..." value="${escapeHtml(branchQuery)}">
+                ${branchQuery ? `<span class="column-search-matches">${branchMatchCount} match${branchMatchCount !== 1 ? 'es' : ''}</span>` : ''}
+                <button class="column-search-close" data-branch="${escapeHtml(bName)}" title="Close branch search">&times;</button>
+              </div>
+            ` : ''}
+
             <div class="column-header-sub">
               ${headCommit ? `<span>HEAD: <code class="sha-mini">${headCommit.shortSha}</code></span> &bull; <span>${formatRelativeDate(headCommit.date)}</span>` : ''}
             </div>
@@ -705,6 +887,26 @@
         if (row.type === 'commit') {
           const c = row.commit;
           const isSelected = state.selectedCommit && state.selectedCommit.sha === c.sha;
+
+          const isGlobalQuery = Boolean(state.globalSearchQuery);
+          const isBranchQuery = Boolean(branchQuery);
+          const globalMatches = isGlobalQuery && matchCommit(c, state.globalSearchQuery);
+          const branchMatches = isBranchQuery && matchCommit(c, branchQuery);
+          const isCurrentGlobalMatch = state.currentSearchIndex >= 0 && state.globalSearchResults[state.currentSearchIndex] === c.sha;
+
+          let isDimmed = false;
+          if (isBranchQuery && !branchMatches) {
+            isDimmed = true;
+          } else if (isGlobalQuery && !globalMatches) {
+            isDimmed = true;
+          }
+
+          let cardSearchClass = '';
+          if (isCurrentGlobalMatch) {
+            cardSearchClass = 'search-current';
+          } else if (globalMatches || branchMatches) {
+            cardSearchClass = 'search-match';
+          }
 
           let badgeHtml = '';
           if (c.isHead) {
@@ -732,17 +934,17 @@
           }
 
           boardHtml += `
-            <div class="column-timeline-item commit-item ${isSelected ? 'selected' : ''}" data-sha="${c.sha}">
+            <div class="column-timeline-item commit-item ${isSelected ? 'selected' : ''} ${isDimmed ? 'dimmed-by-search' : ''}" data-sha="${c.sha}">
               <div class="column-dot-wrapper">
                 <div class="column-commit-dot ${c.isHead ? 'is-head-dot' : ''} ${c.isForkPoint ? 'is-fork-dot' : ''}"
                      data-sha="${c.sha}"
                      data-branch="${escapeHtml(bName)}"
-                     style="background:${color.color}; ${c.isHead ? `box-shadow: 0 0 0 3px rgba(255,255,255,0.15), 0 0 10px ${color.color};` : ''}"
+                     style="background:${color.color};"
                      title="${escapeHtml(c.message.split('\n')[0])}">
                 </div>
               </div>
 
-              <div class="column-commit-card ${isSelected ? 'active-selected' : ''}"
+              <div class="column-commit-card ${isSelected ? 'active-selected' : ''} ${cardSearchClass}"
                    data-sha="${c.sha}"
                    style="border-left-color:${color.color};">
                 <div class="column-card-title-row">
@@ -770,13 +972,19 @@
             </div>
           `;
         } else if (row.type === 'collapsed') {
+          const isGlobalQuery = Boolean(state.globalSearchQuery);
+          const isBranchQuery = Boolean(branchQuery);
+          const hasChainMatch = (isGlobalQuery && row.commits.some(c => matchCommit(c, state.globalSearchQuery)))
+                             || (isBranchQuery && row.commits.some(c => matchCommit(c, branchQuery)));
+          const isChainDimmed = (isGlobalQuery || isBranchQuery) && !hasChainMatch;
+
           boardHtml += `
-            <div class="column-timeline-item collapsed-item" data-chain-id="${row.chainId}">
+            <div class="column-timeline-item collapsed-item ${isChainDimmed ? 'dimmed-by-search' : ''}" data-chain-id="${row.chainId}">
               <div class="column-dot-wrapper">
                 <div class="column-collapsed-marker" style="border-color:${color.color};" title="${row.count} commits collapsed"></div>
               </div>
 
-              <div class="column-collapsed-card" data-chain-id="${row.chainId}" style="border-left: 3px dashed ${color.color}; background: linear-gradient(90deg, ${color.bg}, rgba(15, 23, 42, 0.45));">
+              <div class="column-collapsed-card ${hasChainMatch ? 'has-search-match' : ''}" data-chain-id="${row.chainId}" style="border-left: 3px dashed ${color.color}; background: #0d1117;">
                 <div class="collapsed-card-left">
                   <span class="collapsed-pill-icon">&ctdot;</span>
                   <span class="collapsed-count-text">${row.count} commits collapsed</span>
@@ -795,12 +1003,23 @@
           if (row.isExpanded && row.commits.length > 0) {
             boardHtml += `<div class="expanded-subcommits-container">`;
             row.commits.forEach(innerCommit => {
+              const innerGlobalMatches = isGlobalQuery && matchCommit(innerCommit, state.globalSearchQuery);
+              const innerBranchMatches = isBranchQuery && matchCommit(innerCommit, branchQuery);
+              const isCurrentInnerMatch = state.currentSearchIndex >= 0 && state.globalSearchResults[state.currentSearchIndex] === innerCommit.sha;
+              let isInnerDimmed = false;
+              if (isBranchQuery && !innerBranchMatches) isInnerDimmed = true;
+              else if (isGlobalQuery && !innerGlobalMatches) isInnerDimmed = true;
+
+              let innerCardSearchClass = '';
+              if (isCurrentInnerMatch) innerCardSearchClass = 'search-current';
+              else if (innerGlobalMatches || innerBranchMatches) innerCardSearchClass = 'search-match';
+
               boardHtml += `
-                <div class="column-timeline-item commit-item expanded-subcommit" data-sha="${innerCommit.sha}">
+                <div class="column-timeline-item commit-item expanded-subcommit ${isInnerDimmed ? 'dimmed-by-search' : ''}" data-sha="${innerCommit.sha}">
                   <div class="column-dot-wrapper">
                     <div class="column-commit-dot" style="background:${color.color}; width:10px; height:10px;" data-sha="${innerCommit.sha}"></div>
                   </div>
-                  <div class="column-commit-card subcommit-card" data-sha="${innerCommit.sha}" style="border-left-color:${color.color};">
+                  <div class="column-commit-card subcommit-card ${innerCardSearchClass}" data-sha="${innerCommit.sha}" style="border-left-color:${color.color};">
                     <div class="column-card-title-row">
                       <span class="column-commit-message">${escapeHtml(innerCommit.message.split('\n')[0])}</span>
                     </div>
@@ -958,6 +1177,39 @@
         e.stopPropagation();
         const bName = btn.getAttribute('data-branch');
         if (bName) toggleBranch(bName);
+      });
+    });
+
+    // Inline branch search toggle button
+    document.querySelectorAll('.column-search-toggle').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const bName = btn.getAttribute('data-branch');
+        if (bName) toggleBranchSearch(bName);
+      });
+    });
+
+    // Inline branch search input
+    document.querySelectorAll('.column-search-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const bName = input.getAttribute('data-branch');
+        if (bName) setBranchSearchQuery(bName, e.target.value);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          const bName = input.getAttribute('data-branch');
+          if (bName) toggleBranchSearch(bName);
+        }
+      });
+      input.addEventListener('click', (e) => e.stopPropagation());
+    });
+
+    // Inline branch search close button
+    document.querySelectorAll('.column-search-close').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const bName = btn.getAttribute('data-branch');
+        if (bName) toggleBranchSearch(bName);
       });
     });
 
@@ -1214,6 +1466,61 @@
         renderGraph();
       });
     }
+
+    // Global Find Commit Tool Listeners
+    const globalSearchInput = document.getElementById('global-search-input');
+    const btnClearGlobalSearch = document.getElementById('btn-clear-global-search');
+    const btnPrevMatch = document.getElementById('btn-prev-match');
+    const btnNextMatch = document.getElementById('btn-next-match');
+
+    if (globalSearchInput) {
+      globalSearchInput.addEventListener('input', (e) => {
+        applyGlobalSearch(e.target.value);
+      });
+      globalSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            navigateSearchMatch(-1);
+          } else {
+            navigateSearchMatch(1);
+          }
+        } else if (e.key === 'Escape') {
+          clearGlobalSearch();
+          globalSearchInput.blur();
+        }
+      });
+    }
+
+    if (btnClearGlobalSearch) {
+      btnClearGlobalSearch.addEventListener('click', () => {
+        clearGlobalSearch();
+        globalSearchInput?.focus();
+      });
+    }
+
+    if (btnPrevMatch) {
+      btnPrevMatch.addEventListener('click', () => {
+        navigateSearchMatch(-1);
+      });
+    }
+
+    if (btnNextMatch) {
+      btnNextMatch.addEventListener('click', () => {
+        navigateSearchMatch(1);
+      });
+    }
+
+    // Global keyboard shortcut '/' to focus find
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        if (globalSearchInput) {
+          globalSearchInput.focus();
+          globalSearchInput.select();
+        }
+      }
+    });
 
     const modal = document.getElementById('branch-modal');
     if (modal) {
