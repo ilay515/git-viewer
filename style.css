@@ -343,21 +343,23 @@ body {
   flex-direction: column;
   max-width: 980px;
   margin: 0 auto;
+  --rail-width: 90px;
 }
 
 .graph-track-svg {
   position: absolute;
   top: 0;
   left: 0;
-  width: 90px;
+  width: var(--rail-width, 90px);
   height: 100%;
   pointer-events: none;
   z-index: 1;
 }
 
-.graph-node-row {
+.graph-node-row,
+.graph-collapsed-row {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: var(--rail-width, 90px) 1fr;
   align-items: center;
   margin-bottom: 12px;
   position: relative;
@@ -366,10 +368,21 @@ body {
 
 .graph-rails-cell {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   position: relative;
   height: 48px;
+}
+
+.collapsed-rail-marker {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 2px dashed #94a3b8;
+  background: var(--bg-app);
+  position: absolute;
+  z-index: 2;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
 }
 
 .commit-dot {
@@ -521,8 +534,7 @@ body {
 
 /* Collapsed Row Pill */
 .collapsed-chain-container {
-  grid-column: 1 / -1;
-  margin: 6px 0 6px 70px;
+  width: 100%;
   position: relative;
   z-index: 2;
 }
