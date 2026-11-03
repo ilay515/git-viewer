@@ -11,6 +11,8 @@ Standard Git viewers bury branch relationships under hundreds of linear commits.
 ## Features
 
 - **Clean Developer UI**: Disciplined, distraction-free interface built with dark developer tokens, clear visual hierarchy, and zero gimmicky neon glows.
+- **Smart vs All Commits View Modes**: Toggle between **Smart** mode (intermediate linear commits collapsed into compact capsules) and **All Commits** mode (every single commit shown along the branch timeline).
+- **Configurable Commit Depth & "Load More Commits"**: Select initial fetch depth (30, 50, 100, 200 commits per branch) or click `↓ Load More Commits (+50)` at the bottom of any branch column to continuously load deeper commit history.
 - **Find Globally Tool (`/`)**: Search across all active branches by commit message, author name, or SHA hash. Features auto-expansion of collapsed chains containing matches, match counter, and prev/next navigation (`Enter` / `Shift+Enter`).
 - **Find Commit on Branch**: Inline search tool directly inside each branch column header. Quickly filter or highlight commits within a specific branch.
 - **Multi-Column Swimlane Layout**: Each branch has its own dedicated column. Commit messages and cards are cleanly separated and never cramped together.

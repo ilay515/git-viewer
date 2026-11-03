@@ -414,6 +414,40 @@ body {
   font-weight: 500;
 }
 
+/* Commit Depth Selector */
+.depth-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.depth-selector-group label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.depth-select {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  padding-right: 2px;
+}
+
+.depth-select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
 .rate-limit-pill {
   font-size: 11px;
   font-family: var(--font-mono);
@@ -422,6 +456,43 @@ body {
   padding: 2px 7px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-default);
+}
+
+/* Column Footer & Load More Commits */
+.column-footer-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.btn-load-more-commits {
+  width: 100%;
+  background: #161b22;
+  border: 1px dashed var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.btn-load-more-commits:hover {
+  background: #21262d;
+  color: var(--text-primary);
+  border-color: #8b949e;
+  border-style: solid;
+}
+
+.btn-load-more-commits:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* Main Layout */

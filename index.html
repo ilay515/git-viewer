@@ -67,8 +67,25 @@
         <!-- Injected rate limit -->
       </div>
 
+      <!-- View Mode: Smart vs All Commits -->
+      <div class="toggle-group" id="filter-mode-group">
+        <button class="toggle-btn active" id="btn-mode-smart" title="Collapse linear intermediate commits">Smart</button>
+        <button class="toggle-btn" id="btn-mode-all" title="Show every individual commit">All Commits</button>
+      </div>
+
+      <!-- Depth Selector -->
+      <div class="depth-selector-group">
+        <label for="commit-depth-select">Fetch:</label>
+        <select id="commit-depth-select" class="depth-select" title="Number of commits to fetch per branch">
+          <option value="30">30</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+        </select>
+      </div>
+
       <div class="toggle-group">
-        <button class="toggle-btn" id="btn-collapse-all" title="Collapse linear intermediate commits">Collapse All</button>
+        <button class="toggle-btn" id="btn-collapse-all" title="Collapse linear intermediate commits">Fold All</button>
         <button class="toggle-btn" id="btn-expand-all" title="Expand all commit chains">Expand All</button>
       </div>
     </div>

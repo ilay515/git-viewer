@@ -24,6 +24,9 @@
     currentSearchIndex: -1,
     branchSearchQueries: new Map(), // branchName -> query
     activeBranchSearch: new Set(),  // set of branchNames with visible search input
+    commitsDepth: 50,               // default commits depth
+    branchPages: new Map(),         // branchName -> page number
+    branchLoadingMore: new Set(),   // set of branches currently fetching more
   };
 
   // Branch Color Palette (Clean Developer-Grade Colors)
@@ -390,10 +393,11 @@
       }
     }
 
-    // Always fetch recent commits for each selected branch to ensure HEAD and recent linear chain are present
+    // Fetch commits for each selected branch with configured depth
     for (const bName of selectedBranchNames) {
+      state.branchPages.set(bName, 1);
       try {
-        const list = await fetchGitHub(`/repos/${ownerRepo}/commits?sha=${encodeURIComponent(bName)}&per_page=15`);
+        const list = await fetchGitHub(`/repos/${ownerRepo}/commits?sha=${encodeURIComponent(bName)}&per_page=${state.commitsDepth}&page=1`);
         list.forEach((c, idx) => {
           if (!state.commitsMap.has(c.sha)) {
             const commitObj = formatGitHubCommit(c, bName);
@@ -407,6 +411,65 @@
       } catch (e) {
         console.error(`Error loading commits for branch ${bName}:`, e);
       }
+    }
+  }
+
+  async function loadMoreCommits(branchName) {
+    if (state.branchLoadingMore.has(branchName)) return;
+    state.branchLoadingMore.add(branchName);
+    renderGraph();
+
+    if (state.isDemo) {
+      // Simulate adding 10 more historical commits for this branch in demo mode
+      const bCommits = Array.from(state.commitsMap.values()).filter(c => c.branch === branchName);
+      bCommits.sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest first
+      const oldest = bCommits[0];
+      const oldestTime = oldest ? new Date(oldest.date).getTime() : Date.now();
+      const startIndex = bCommits.length + 1;
+
+      for (let i = startIndex; i < startIndex + 10; i++) {
+        const extraSha = `x${i}${hashCode(branchName).toString(16).slice(-4)}${i}`;
+        state.commitsMap.set(extraSha, {
+          sha: extraSha,
+          shortSha: extraSha.substring(0, 7),
+          message: `chore(${branchName}): historical baseline commit ${i}`,
+          author: { name: 'Demo Developer', login: 'developer', avatar: 'https://avatars.githubusercontent.com/u/1000' },
+          date: new Date(oldestTime - (i - startIndex + 1) * 86400000).toISOString(),
+          parents: [`parent_${i}`],
+          branch: branchName,
+          stats: { additions: 12 + i, deletions: 3 },
+          isHead: false,
+        });
+      }
+      state.branchLoadingMore.delete(branchName);
+      renderStatus(`Loaded 10 more historical commits for ${branchName}.`);
+      renderGraph();
+      return;
+    }
+
+    const nextPage = (state.branchPages.get(branchName) || 1) + 1;
+    renderStatus(`Fetching page ${nextPage} of commits for ${branchName}...`);
+
+    try {
+      const list = await fetchGitHub(`/repos/${state.repo}/commits?sha=${encodeURIComponent(branchName)}&per_page=${state.commitsDepth}&page=${nextPage}`);
+      if (Array.isArray(list) && list.length > 0) {
+        list.forEach(c => {
+          if (!state.commitsMap.has(c.sha)) {
+            const commitObj = formatGitHubCommit(c, branchName);
+            state.commitsMap.set(commitObj.sha, commitObj);
+          }
+        });
+        state.branchPages.set(branchName, nextPage);
+        renderStatus(`Loaded ${list.length} more commits for ${branchName} (page ${nextPage}).`);
+      } else {
+        renderStatus(`Reached earliest available commit for ${branchName}.`);
+      }
+    } catch (e) {
+      console.error(`Error loading more commits for ${branchName}:`, e);
+      renderStatus(`Could not load more commits: ${e.message}`);
+    } finally {
+      state.branchLoadingMore.delete(branchName);
+      renderGraph();
     }
   }
 
@@ -1058,7 +1121,13 @@
         `;
       }
 
+      const isLoadingMore = state.branchLoadingMore.has(bName);
       boardHtml += `
+            <div class="column-footer-actions">
+              <button class="btn-load-more-commits" data-branch="${escapeHtml(bName)}" ${isLoadingMore ? 'disabled' : ''}>
+                ${isLoadingMore ? '<span>Loading commits...</span>' : `<span>&darr; Load More Commits (+${state.commitsDepth})</span>`}
+              </button>
+            </div>
           </div>
         </div>
       `;
@@ -1210,6 +1279,15 @@
         e.stopPropagation();
         const bName = btn.getAttribute('data-branch');
         if (bName) toggleBranchSearch(bName);
+      });
+    });
+
+    // Load More Commits button click
+    document.querySelectorAll('.btn-load-more-commits').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const bName = btn.getAttribute('data-branch');
+        if (bName) loadMoreCommits(bName);
       });
     });
 
@@ -1464,6 +1542,40 @@
       btnCollapseAll.addEventListener('click', () => {
         state.expandedChains.clear();
         renderGraph();
+      });
+    }
+
+    // Filter mode buttons: Smart vs All Commits
+    const btnModeSmart = document.getElementById('btn-mode-smart');
+    const btnModeAll = document.getElementById('btn-mode-all');
+
+    if (btnModeSmart && btnModeAll) {
+      btnModeSmart.addEventListener('click', () => {
+        state.filterMode = 'smart';
+        btnModeSmart.classList.add('active');
+        btnModeAll.classList.remove('active');
+        renderGraph();
+      });
+
+      btnModeAll.addEventListener('click', () => {
+        state.filterMode = 'all';
+        btnModeAll.classList.add('active');
+        btnModeSmart.classList.remove('active');
+        renderGraph();
+      });
+    }
+
+    // Depth Selector
+    const commitDepthSelect = document.getElementById('commit-depth-select');
+    if (commitDepthSelect) {
+      commitDepthSelect.value = state.commitsDepth.toString();
+      commitDepthSelect.addEventListener('change', (e) => {
+        state.commitsDepth = parseInt(e.target.value, 10);
+        if (!state.isDemo && state.repo) {
+          fetchCommitsForBranches(state.repo, state.selectedBranches).then(renderGraph);
+        } else {
+          renderGraph();
+        }
       });
     }
 
