@@ -427,96 +427,38 @@
     };
   }
 
-  // --- DIVERSION & COLLAPSE ALGORITHM ---
-  function computeDisplayRows() {
+  // --- DIVERSION & MULTI-COLUMN BRANCH ENGINE ---
+  function computeBranchDisplayRows(branchName) {
     const allCommits = Array.from(state.commitsMap.values());
-    if (allCommits.length === 0) return [];
+    const bCommits = allCommits.filter(c => c.branch === branchName);
+    bCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    // Identify merge commits
-    allCommits.forEach(c => {
-      if (c.parents && c.parents.length > 1) {
-        c.isMerge = true;
-      }
+    if (bCommits.length === 0) return [];
+
+    bCommits.forEach((c, idx) => {
+      if (idx === 0) c.isHead = true;
+      if (c.parents && c.parents.length > 1) c.isMerge = true;
       c.isAnchor = Boolean(c.isHead || c.isForkPoint || c.isDiversionStart || c.isMerge);
     });
 
     if (state.filterMode === 'all') {
-      const sorted = [...allCommits].sort((a, b) => new Date(b.date) - new Date(a.date));
-      return sorted.map(c => ({ type: 'commit', commit: c, branch: c.branch }));
+      return bCommits.map(c => ({ type: 'commit', commit: c, branch: branchName }));
     }
 
     const rows = [];
-    const baseBranch = state.selectedBranches[0];
-    const childBranches = state.selectedBranches.slice(1);
+    let chain = [];
 
-    // 1. Process child branches (e.g. develop / feature branches)
-    childBranches.forEach(bName => {
-      const bCommits = allCommits.filter(c => c.branch === bName);
-      bCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-      let currentChain = [];
-
-      function flushBChain() {
-        if (currentChain.length === 0) return;
-        if (currentChain.length <= 1) {
-          currentChain.forEach(c => rows.push({ type: 'commit', commit: c, branch: bName }));
-        } else {
-          const chainId = `chain-${currentChain[0].sha}-${currentChain[currentChain.length - 1].sha}`;
-          const isExpanded = state.expandedChains.has(chainId);
-          let totalAdd = 0;
-          let totalDel = 0;
-          const authors = new Set();
-          currentChain.forEach(c => {
-            if (c.stats) {
-              totalAdd += c.stats.additions || 0;
-              totalDel += c.stats.deletions || 0;
-            }
-            if (c.author?.name) authors.add(c.author.name);
-          });
-          rows.push({
-            type: 'collapsed',
-            chainId,
-            commits: [...currentChain],
-            count: currentChain.length,
-            branch: bName,
-            startSha: currentChain[0].shortSha,
-            endSha: currentChain[currentChain.length - 1].shortSha,
-            totalAdd,
-            totalDel,
-            authorsCount: authors.size,
-            isExpanded,
-          });
-        }
-        currentChain = [];
-      }
-
-      bCommits.forEach(c => {
-        if (c.isAnchor) {
-          flushBChain();
-          rows.push({ type: 'commit', commit: c, branch: bName });
-        } else {
-          currentChain.push(c);
-        }
-      });
-      flushBChain();
-    });
-
-    // 2. Process base branch (e.g. main / master)
-    const baseCommits = allCommits.filter(c => c.branch === baseBranch || (!childBranches.includes(c.branch) && !c.branch));
-    baseCommits.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    let baseChain = [];
-    function flushBaseChain() {
-      if (baseChain.length === 0) return;
-      if (baseChain.length <= 1) {
-        baseChain.forEach(c => rows.push({ type: 'commit', commit: c, branch: baseBranch }));
+    function flushChain() {
+      if (chain.length === 0) return;
+      if (chain.length <= 1) {
+        chain.forEach(c => rows.push({ type: 'commit', commit: c, branch: branchName }));
       } else {
-        const chainId = `chain-${baseChain[0].sha}-${baseChain[baseChain.length - 1].sha}`;
+        const chainId = `chain-${branchName}-${chain[0].sha}-${chain[chain.length - 1].sha}`;
         const isExpanded = state.expandedChains.has(chainId);
         let totalAdd = 0;
         let totalDel = 0;
         const authors = new Set();
-        baseChain.forEach(c => {
+        chain.forEach(c => {
           if (c.stats) {
             totalAdd += c.stats.additions || 0;
             totalDel += c.stats.deletions || 0;
@@ -526,57 +468,65 @@
         rows.push({
           type: 'collapsed',
           chainId,
-          commits: [...baseChain],
-          count: baseChain.length,
-          branch: baseBranch,
-          startSha: baseChain[0].shortSha,
-          endSha: baseChain[baseChain.length - 1].shortSha,
+          commits: [...chain],
+          count: chain.length,
+          branch: branchName,
+          startSha: chain[0].shortSha,
+          endSha: chain[chain.length - 1].shortSha,
           totalAdd,
           totalDel,
           authorsCount: authors.size,
           isExpanded,
         });
       }
-      baseChain = [];
+      chain = [];
     }
 
-    baseCommits.forEach(c => {
+    bCommits.forEach(c => {
       if (c.isAnchor) {
-        flushBaseChain();
-        rows.push({ type: 'commit', commit: c, branch: baseBranch });
+        flushChain();
+        rows.push({ type: 'commit', commit: c, branch: branchName });
       } else {
-        baseChain.push(c);
+        chain.push(c);
       }
     });
-    flushBaseChain();
+    flushChain();
 
-    // If compare reported behind_by commits on base branch that weren't individually downloaded
-    if (state.behindByCount && state.behindByCount > 0 && state.selectedBranches.length === 2) {
-      const hasBaseCollapsed = rows.some(r => r.type === 'collapsed' && r.branch === baseBranch);
-      const hasFork = rows.some(r => r.type === 'commit' && r.commit.isForkPoint);
+    return rows;
+  }
 
-      if (!hasBaseCollapsed && hasFork) {
-        const forkIdx = rows.findIndex(r => r.type === 'commit' && r.commit.isForkPoint);
-        if (forkIdx >= 0) {
-          const synthChainId = `chain-synth-behind-${baseBranch}`;
-          rows.splice(forkIdx, 0, {
-            type: 'collapsed',
-            chainId: synthChainId,
-            commits: [],
-            count: state.behindByCount,
-            branch: baseBranch,
-            startSha: 'HEAD',
-            endSha: 'fork',
-            totalAdd: 0,
-            totalDel: 0,
-            authorsCount: 1,
-            isExpanded: state.expandedChains.has(synthChainId),
-          });
+  function findBranchOrigin(branchName) {
+    const allCommits = Array.from(state.commitsMap.values());
+    const bCommits = allCommits
+      .filter(c => c.branch === branchName)
+      .sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest first
+
+    if (bCommits.length === 0) return null;
+    const oldest = bCommits[0];
+
+    if (oldest.parents && oldest.parents.length > 0) {
+      for (const pSha of oldest.parents) {
+        const parentCommit = state.commitsMap.get(pSha);
+        if (parentCommit && parentCommit.branch !== branchName) {
+          return {
+            commit: parentCommit,
+            parentBranch: parentCommit.branch,
+          };
         }
       }
     }
 
-    return rows;
+    if (oldest.isDiversionStart) {
+      const forkCommit = allCommits.find(c => c.isForkPoint && c.branch !== branchName);
+      if (forkCommit) {
+        return {
+          commit: forkCommit,
+          parentBranch: forkCommit.branch || state.selectedBranches[0],
+        };
+      }
+    }
+
+    return null;
   }
 
   // --- RENDER FUNCTIONS ---
@@ -703,321 +653,281 @@
       return;
     }
 
-    state.displayRows = computeDisplayRows();
-
-    if (state.displayRows.length === 0) {
+    if (state.selectedBranches.length === 0) {
       viewport.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">&#x2442;</div>
-          <h3>No commits loaded</h3>
-          <p>Enter a repository name &amp; PAT above or click "Load Demo" to explore.</p>
+          <h3>No branches selected</h3>
+          <p>Click "+ All" or enable branches in the toolbar above to view.</p>
         </div>
       `;
       return;
     }
 
-    // Dynamic Rail Width based on number of active branches
-    const railWidth = Math.max(90, state.selectedBranches.length * 36 + 24);
-    const branchCols = new Map();
-    state.selectedBranches.forEach((name, idx) => {
-      branchCols.set(name, 24 + idx * 36);
-    });
+    let boardHtml = `<div class="branch-columns-board" id="branch-columns-board">`;
+    boardHtml += `<svg class="inter-column-svg" id="inter-column-svg"></svg>`;
 
-    let html = `<div class="git-graph-view" id="graph-nodes-container" style="--rail-width:${railWidth}px;">`;
-    html += `<svg class="graph-track-svg" id="graph-track-svg" style="width:${railWidth}px;"></svg>`;
+    state.selectedBranches.forEach((bName, bIdx) => {
+      const color = getBranchColor(bName, bIdx);
+      const rows = computeBranchDisplayRows(bName);
+      const bCommits = Array.from(state.commitsMap.values()).filter(c => c.branch === bName);
+      const headCommit = bCommits.find(c => c.isHead) || bCommits[0];
+      const canDisable = state.selectedBranches.length > 1;
+      const origin = findBranchOrigin(bName);
 
-    state.displayRows.forEach((row, rowIndex) => {
-      const branchName = row.branch || state.selectedBranches[0];
-      const color = getBranchColor(branchName, state.selectedBranches.indexOf(branchName));
-      const colX = branchCols.get(branchName) || 24;
-
-      if (row.type === 'commit') {
-        const c = row.commit;
-        const isSelected = state.selectedCommit && state.selectedCommit.sha === c.sha;
-
-        let badgeHtml = '';
-        if (c.isHead) {
-          const isDevOrSecondary = c.branch === 'dev' || c.branch !== state.selectedBranches[0];
-          const badgeClass = isDevOrSecondary ? 'badge-head-dev' : 'badge-head-main';
-          badgeHtml = `<span class="badge ${badgeClass}">${escapeHtml(c.branch)} HEAD</span>`;
-        } else if (c.isForkPoint) {
-          badgeHtml = `<span class="badge badge-fork">&#x2934; Common Ancestor (Fork Point)</span>`;
-        } else if (c.isDiversionStart) {
-          badgeHtml = `<span class="badge badge-diverge">First commit on ${escapeHtml(c.branch)}</span>`;
-        } else if (c.isMerge) {
-          badgeHtml = `<span class="badge badge-merge">&#x2935; Merge Commit</span>`;
-        }
-
-        const dateStr = formatRelativeDate(c.date);
-
-        const armWidth = Math.max(0, railWidth - colX);
-
-        html += `
-          <div class="graph-node-row" data-row-idx="${rowIndex}" data-branch="${escapeHtml(branchName)}" data-sha="${c.sha}">
-            <div class="graph-rails-cell">
-              <div class="connector-arm" style="left:${colX}px; width:${armWidth}px; background:linear-gradient(90deg, ${color.color}, rgba(255,255,255,0.05));"></div>
-              <div class="commit-dot" 
-                   data-sha="${c.sha}"
-                   data-branch="${escapeHtml(branchName)}"
-                   style="background:${color.color}; left:${colX - 8}px;"
-                   title="${escapeHtml(c.message.split('\n')[0])}">
+      boardHtml += `
+        <div class="branch-column" data-branch="${escapeHtml(bName)}" style="--branch-accent:${color.color}; --rail-line-bg:linear-gradient(180deg, ${color.color}, rgba(255,255,255,0.06));">
+          
+          <!-- Column Header -->
+          <div class="branch-column-header">
+            <div class="column-header-top">
+              <div class="column-header-title">
+                <div class="column-header-dot" style="background:${color.color}; box-shadow:0 0 10px ${color.color};"></div>
+                <span class="column-branch-name">${escapeHtml(bName)}</span>
+                ${bIdx === 0 ? '<span class="badge badge-head-main" style="font-size:9px;">Base</span>' : ''}
+              </div>
+              <div class="column-header-actions">
+                <span class="column-commits-badge">${bCommits.length} commits</span>
+                <button class="column-close-btn" data-branch="${escapeHtml(bName)}" title="${canDisable ? `Disable ${escapeHtml(bName)} column` : 'At least one branch must remain visible'}" ${canDisable ? '' : 'disabled'}>&times;</button>
               </div>
             </div>
-            <div class="commit-card ${isSelected ? 'active-selected' : ''}" 
-                 data-sha="${c.sha}"
-                 style="border-left-color:${color.color}; background:linear-gradient(90deg, ${color.bg}, rgba(30, 41, 59, 0.55));">
-              <div class="commit-main-info">
-                <div class="commit-top-line">
-                  <span class="branch-tag" style="background:${color.bg}; border-color:${color.color}; color:${color.light};">
-                    <span class="pill-dot" style="background:${color.color}; width:6px; height:6px;"></span>
-                    <span>${escapeHtml(branchName)}</span>
-                  </span>
-                  <span class="commit-message">${escapeHtml(c.message.split('\n')[0])}</span>
+            <div class="column-header-sub">
+              ${headCommit ? `<span>HEAD: <code class="sha-mini">${headCommit.shortSha}</code></span> &bull; <span>${formatRelativeDate(headCommit.date)}</span>` : ''}
+            </div>
+          </div>
+
+          <!-- Column Timeline -->
+          <div class="branch-column-timeline">
+            <div class="column-rail-line"></div>
+      `;
+
+      rows.forEach((row) => {
+        if (row.type === 'commit') {
+          const c = row.commit;
+          const isSelected = state.selectedCommit && state.selectedCommit.sha === c.sha;
+
+          let badgeHtml = '';
+          if (c.isHead) {
+            badgeHtml = `<span class="badge ${bIdx === 0 ? 'badge-head-main' : 'badge-head-dev'}">HEAD</span>`;
+          } else if (c.isForkPoint) {
+            badgeHtml = `<span class="badge badge-fork">&#x2934; Fork Point</span>`;
+          } else if (c.isDiversionStart) {
+            badgeHtml = `<span class="badge badge-diverge">Branch Start</span>`;
+          } else if (c.isMerge) {
+            badgeHtml = `<span class="badge badge-merge">&#x2935; Merge</span>`;
+          }
+
+          // Check if other branches diverged from this commit
+          let forkNoteHtml = '';
+          if (c.forkChildren && c.forkChildren.length > 0) {
+            const visibleChildren = c.forkChildren.filter(ch => state.selectedBranches.includes(ch));
+            if (visibleChildren.length > 0) {
+              forkNoteHtml = `<div class="branch-forked-note">&bull; Diverged to: ${visibleChildren.join(', ')} &rarr;</div>`;
+            }
+          }
+
+          let diversionNoteHtml = '';
+          if (c.isDiversionStart && origin) {
+            diversionNoteHtml = `<div class="branch-diversion-note">&bull; Branched off ${escapeHtml(origin.parentBranch)}</div>`;
+          }
+
+          boardHtml += `
+            <div class="column-timeline-item commit-item ${isSelected ? 'selected' : ''}" data-sha="${c.sha}">
+              <div class="column-dot-wrapper">
+                <div class="column-commit-dot ${c.isHead ? 'is-head-dot' : ''} ${c.isForkPoint ? 'is-fork-dot' : ''}"
+                     data-sha="${c.sha}"
+                     data-branch="${escapeHtml(bName)}"
+                     style="background:${color.color}; ${c.isHead ? `box-shadow: 0 0 0 3px rgba(255,255,255,0.15), 0 0 10px ${color.color};` : ''}"
+                     title="${escapeHtml(c.message.split('\n')[0])}">
+                </div>
+              </div>
+
+              <div class="column-commit-card ${isSelected ? 'active-selected' : ''}"
+                   data-sha="${c.sha}"
+                   style="border-left-color:${color.color};">
+                <div class="column-card-title-row">
+                  <span class="column-commit-message">${escapeHtml(c.message.split('\n')[0])}</span>
                   ${badgeHtml}
                 </div>
-                <div class="commit-meta">
+
+                ${forkNoteHtml}
+                ${diversionNoteHtml}
+
+                <div class="column-card-meta">
                   <span class="sha-code">${c.shortSha}</span>
                   <span class="author-chip">
                     <img class="avatar-mini" src="${escapeHtml(c.author?.avatar)}" alt="" onerror="this.style.display='none'">
                     <span>${escapeHtml(c.author?.name || c.author?.login)}</span>
                   </span>
                   <span>&bull;</span>
-                  <span>${dateStr}</span>
-                </div>
-              </div>
-              <div class="diff-stats">
-                ${c.stats?.additions ? `<span class="diff-add">+${c.stats.additions}</span>` : ''}
-                ${c.stats?.deletions ? `<span class="diff-del">-${c.stats.deletions}</span>` : ''}
-              </div>
-            </div>
-          </div>
-        `;
-      } else if (row.type === 'collapsed') {
-        const armWidth = Math.max(0, railWidth - colX);
-
-        html += `
-          <div class="graph-collapsed-row" data-row-idx="${rowIndex}" data-branch="${escapeHtml(branchName)}" data-chain-id="${row.chainId}">
-            <div class="graph-rails-cell">
-              <div class="connector-arm" style="left:${colX}px; width:${armWidth}px; border-top:2px dashed ${color.color}; background:transparent;"></div>
-              <div class="collapsed-rail-marker" 
-                   data-chain-id="${row.chainId}"
-                   data-branch="${escapeHtml(branchName)}"
-                   style="border-color:${color.color}; left:${colX - 6}px;"
-                   title="${row.count} commits collapsed on ${escapeHtml(branchName)}">
-              </div>
-            </div>
-            <div class="collapsed-chain-container" data-chain-id="${row.chainId}">
-              <div class="collapsed-pill" data-chain-id="${row.chainId}" style="border-left:4px dashed ${color.color}; background:linear-gradient(90deg, ${color.bg}, rgba(17, 24, 39, 0.45));">
-                <div class="collapsed-pill-left">
-                  <span class="branch-tag" style="background:${color.bg}; border-color:${color.color}; color:${color.light};">
-                    <span class="pill-dot" style="background:${color.color}; width:6px; height:6px;"></span>
-                    <span>${escapeHtml(row.branch)}</span>
-                  </span>
-                  <div>
-                    <span class="collapsed-count">${row.count} commits collapsed</span>
-                    <span style="color:#64748b; font-size:10px; margin-left:4px;">(${row.startSha} &larr; ${row.endSha})</span>
+                  <span>${formatRelativeDate(c.date)}</span>
+                  <div class="diff-stats" style="margin-left:auto;">
+                    ${c.stats?.additions ? `<span class="diff-add">+${c.stats.additions}</span>` : ''}
+                    ${c.stats?.deletions ? `<span class="diff-del">-${c.stats.deletions}</span>` : ''}
                   </div>
                 </div>
-                <div class="collapsed-pill-right">
+              </div>
+            </div>
+          `;
+        } else if (row.type === 'collapsed') {
+          boardHtml += `
+            <div class="column-timeline-item collapsed-item" data-chain-id="${row.chainId}">
+              <div class="column-dot-wrapper">
+                <div class="column-collapsed-marker" style="border-color:${color.color};" title="${row.count} commits collapsed"></div>
+              </div>
+
+              <div class="column-collapsed-card" data-chain-id="${row.chainId}" style="border-left: 3px dashed ${color.color}; background: linear-gradient(90deg, ${color.bg}, rgba(15, 23, 42, 0.45));">
+                <div class="collapsed-card-left">
+                  <span class="collapsed-pill-icon">&ctdot;</span>
+                  <span class="collapsed-count-text">${row.count} commits collapsed</span>
+                  <span class="collapsed-sha-range">(${row.startSha} &hellip; ${row.endSha})</span>
+                </div>
+                <div class="collapsed-card-right">
                   ${row.totalAdd || row.totalDel ? `<span style="font-family:var(--font-mono); font-size:10px;">+${row.totalAdd} / -${row.totalDel}</span>` : ''}
-                  <span style="color:${color.light}; font-weight:600;">${row.isExpanded ? 'Fold &uarr;' : 'Expand &darr;'}</span>
+                  <button class="btn-toggle-expand" style="color:${color.light};">
+                    ${row.isExpanded ? 'Fold &uarr;' : 'Expand &darr;'}
+                  </button>
                 </div>
               </div>
-        `;
+            </div>
+          `;
 
-        if (row.isExpanded && row.commits.length > 0) {
-          html += `<div class="expanded-commits-group">`;
-          row.commits.forEach(innerCommit => {
-            html += `
-              <div class="commit-card" data-sha="${innerCommit.sha}" style="border-style:dashed;">
-                <div class="commit-main-info">
-                  <div class="commit-top-line">
-                    <span class="commit-message">${escapeHtml(innerCommit.message.split('\n')[0])}</span>
+          if (row.isExpanded && row.commits.length > 0) {
+            boardHtml += `<div class="expanded-subcommits-container">`;
+            row.commits.forEach(innerCommit => {
+              boardHtml += `
+                <div class="column-timeline-item commit-item expanded-subcommit" data-sha="${innerCommit.sha}">
+                  <div class="column-dot-wrapper">
+                    <div class="column-commit-dot" style="background:${color.color}; width:10px; height:10px;" data-sha="${innerCommit.sha}"></div>
                   </div>
-                  <div class="commit-meta">
-                    <span class="sha-code">${innerCommit.shortSha}</span>
-                    <span>${escapeHtml(innerCommit.author?.name)}</span>
-                    <span>&bull;</span>
-                    <span>${formatRelativeDate(innerCommit.date)}</span>
+                  <div class="column-commit-card subcommit-card" data-sha="${innerCommit.sha}" style="border-left-color:${color.color};">
+                    <div class="column-card-title-row">
+                      <span class="column-commit-message">${escapeHtml(innerCommit.message.split('\n')[0])}</span>
+                    </div>
+                    <div class="column-card-meta">
+                      <span class="sha-code">${innerCommit.shortSha}</span>
+                      <span>${escapeHtml(innerCommit.author?.name)}</span>
+                      <span>&bull;</span>
+                      <span>${formatRelativeDate(innerCommit.date)}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            `;
-          });
-          html += `</div>`;
+              `;
+            });
+            boardHtml += `</div>`;
+          }
         }
+      });
 
-        html += `
+      // Branch Origin Banner at the bottom if it branched off an ancestor
+      if (origin && origin.commit) {
+        const parentColor = getBranchColor(origin.parentBranch);
+        boardHtml += `
+          <div class="column-origin-banner" 
+               data-parent-sha="${origin.commit.sha}" 
+               data-child-branch="${escapeHtml(bName)}"
+               style="border-color:${parentColor.color}; background:${parentColor.bg}; color:${parentColor.light};"
+               title="Click to view origin commit in ${escapeHtml(origin.parentBranch)}">
+            <div class="origin-icon">&#x21B3;</div>
+            <div style="flex:1; min-width:0;">
+              <div class="origin-label">Branched from <strong>${escapeHtml(origin.parentBranch)}</strong></div>
+              <div class="origin-commit-desc">
+                <code class="sha-mini">${origin.commit.shortSha}</code>: ${escapeHtml(origin.commit.message.split('\n')[0])}
+              </div>
             </div>
           </div>
         `;
       }
+
+      boardHtml += `
+          </div>
+        </div>
+      `;
     });
 
-    html += `</div>`;
-    viewport.innerHTML = html;
+    // If there are inactive branches, add quick "+ Add Branch Column" card
+    const inactiveBranches = state.branches
+      .map(b => b.name)
+      .filter(name => !state.selectedBranches.includes(name));
+
+    if (inactiveBranches.length > 0) {
+      boardHtml += `
+        <div class="add-branch-column-card" id="btn-add-column-card">
+          <div style="font-size:24px; color:var(--color-main);">&#x002B;</div>
+          <div style="font-weight:600; font-size:13px; color:var(--text-main);">Add Branch Column</div>
+          <div style="font-size:11px; color:var(--text-muted); text-align:center;">
+            ${inactiveBranches.length} more available (${inactiveBranches.slice(0, 2).join(', ')}${inactiveBranches.length > 2 ? '...' : ''})
+          </div>
+        </div>
+      `;
+    }
+
+    boardHtml += `</div>`;
+    viewport.innerHTML = boardHtml;
 
     attachGraphListeners();
 
-    // Render SVG connecting rails
-    requestAnimationFrame(() => renderSvgRails(branchCols, railWidth));
+    // Render inter-column connecting SVG Bézier arcs
+    requestAnimationFrame(() => renderInterColumnSvg());
   }
 
-  // --- SVG GRAPH RAILS & DIVERSION ENGINE ---
-  function renderSvgRails(branchCols, railWidth) {
-    const svg = document.getElementById('graph-track-svg');
-    const container = document.getElementById('graph-nodes-container');
-    if (!svg || !container) return;
+  // --- SVG INTER-COLUMN CONNECTORS ---
+  function renderInterColumnSvg() {
+    const svg = document.getElementById('inter-column-svg');
+    const board = document.getElementById('branch-columns-board');
+    if (!svg || !board) return;
 
-    const totalHeight = container.offsetHeight;
-    if (totalHeight === 0) return;
+    const boardRect = board.getBoundingClientRect();
+    if (boardRect.width === 0 || boardRect.height === 0) return;
 
-    svg.setAttribute('width', railWidth.toString());
-    svg.setAttribute('height', totalHeight.toString());
+    svg.setAttribute('width', board.scrollWidth.toString());
+    svg.setAttribute('height', board.scrollHeight.toString());
 
     let svgContent = '';
-    const containerRect = container.getBoundingClientRect();
 
-    // 1. Collect markers for each branch (both commit dots and collapsed markers)
-    state.selectedBranches.forEach((bName, bIdx) => {
-      const colX = branchCols.get(bName);
-      if (colX === undefined) return;
-      const bColor = getBranchColor(bName, bIdx);
+    state.selectedBranches.forEach((childBranch, childIdx) => {
+      const childColor = getBranchColor(childBranch, childIdx);
+      const origin = findBranchOrigin(childBranch);
+      if (!origin || !origin.commit) return;
 
-      // Find all rows belonging to this branch
-      const rows = container.querySelectorAll(`[data-branch="${CSS.escape(bName)}"]`);
-      const markers = [];
+      const parentCommit = origin.commit;
+      if (!state.selectedBranches.includes(parentCommit.branch)) return;
 
-      rows.forEach(r => {
-        const dot = r.querySelector('.commit-dot') || r.querySelector('.collapsed-rail-marker');
-        if (!dot) return;
-        const dotRect = dot.getBoundingClientRect();
-        const cy = (dotRect.top + dotRect.height / 2) - containerRect.top + container.scrollTop;
-        const isCollapsed = dot.classList.contains('collapsed-rail-marker');
-        const sha = dot.getAttribute('data-sha');
-        markers.push({ cy, isCollapsed, sha, dot });
-      });
+      // Find parent dot element
+      const parentDot = board.querySelector(`.column-commit-dot[data-sha="${parentCommit.sha}"]`);
+      // Find child origin banner or first commit dot
+      const childOriginEl = board.querySelector(`.column-origin-banner[data-child-branch="${childBranch}"]`)
+                         || board.querySelector(`.branch-column[data-branch="${childBranch}"] .column-commit-dot`);
 
-      // Sort vertically top to bottom
-      markers.sort((a, b) => a.cy - b.cy);
+      if (parentDot && childOriginEl) {
+        const pRect = parentDot.getBoundingClientRect();
+        const cRect = childOriginEl.getBoundingClientRect();
 
-      // Draw continuous vertical rail line connecting markers on this branch
-      for (let i = 0; i < markers.length - 1; i++) {
-        const m1 = markers[i];
-        const m2 = markers[i + 1];
-        const isDashed = m1.isCollapsed || m2.isCollapsed;
+        const x1 = (pRect.left + pRect.width / 2) - boardRect.left + board.scrollLeft;
+        const y1 = (pRect.top + pRect.height / 2) - boardRect.top + board.scrollTop;
+
+        const x2 = cRect.left - boardRect.left + board.scrollLeft;
+        const y2 = (cRect.top + cRect.height / 2) - boardRect.top + board.scrollTop;
+
+        const midX = (x1 + x2) / 2;
 
         svgContent += `
-          <line x1="${colX}" y1="${m1.cy}" 
-                x2="${colX}" y2="${m2.cy}" 
-                stroke="${bColor.color}" 
-                stroke-width="2.5" 
-                stroke-linecap="round"
-                ${isDashed ? 'stroke-dasharray="4 3"' : ''} />
+          <path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}"
+                fill="none"
+                stroke="${childColor.color}"
+                stroke-width="2.5"
+                stroke-dasharray="5 4"
+                opacity="0.85" />
         `;
       }
-    });
-
-    // 2. Draw Branch Diversion Curves
-    // Find the Common Ancestor (Fork Point)
-    const forkDot = container.querySelector('.badge-fork')?.closest('.graph-node-row')?.querySelector('.commit-dot')
-                 || container.querySelector('[data-sha]')?.closest('.graph-node-row')?.querySelector('.commit-dot');
-
-    const forkCommit = Array.from(state.commitsMap.values()).find(c => c.isForkPoint);
-
-    if (forkCommit) {
-      const forkEl = container.querySelector(`.commit-dot[data-sha="${forkCommit.sha}"]`);
-      if (forkEl) {
-        const forkRect = forkEl.getBoundingClientRect();
-        const forkBranch = forkCommit.branch || state.selectedBranches[0];
-        const forkColX = branchCols.get(forkBranch) || 24;
-        const forkCy = (forkRect.top + forkRect.height / 2) - containerRect.top + container.scrollTop;
-
-        // Connect each diverged branch to this fork point
-        state.selectedBranches.forEach((bName, bIdx) => {
-          if (bName === forkBranch) return; // skip base branch itself
-
-          const colX = branchCols.get(bName);
-          if (colX === undefined) return;
-          const bColor = getBranchColor(bName, bIdx);
-
-          // Find the diversion start or bottom-most node of this diverged branch
-          const branchRows = container.querySelectorAll(`[data-branch="${CSS.escape(bName)}"]`);
-          if (branchRows.length === 0) return;
-
-          let targetMarker = null;
-          // Prefer diversion start commit dot
-          const divRow = container.querySelector(`.badge-diverge`)?.closest(`[data-branch="${CSS.escape(bName)}"]`);
-          if (divRow) {
-            targetMarker = divRow.querySelector('.commit-dot');
-          }
-
-          if (!targetMarker) {
-            // Pick lowest marker on this branch
-            const lastRow = branchRows[branchRows.length - 1];
-            targetMarker = lastRow.querySelector('.commit-dot') || lastRow.querySelector('.collapsed-rail-marker');
-          }
-
-          if (targetMarker) {
-            const targetRect = targetMarker.getBoundingClientRect();
-            const targetCy = (targetRect.top + targetRect.height / 2) - containerRect.top + container.scrollTop;
-
-            // Draw smooth Bézier curve from fork point to diverged branch
-            const midY = (forkCy + targetCy) / 2;
-            svgContent += `
-              <path d="M ${forkColX} ${forkCy} C ${forkColX} ${midY}, ${colX} ${midY}, ${colX} ${targetCy}" 
-                    fill="none" 
-                    stroke="${bColor.color}" 
-                    stroke-width="2.5" 
-                    stroke-linecap="round" 
-                    stroke-dasharray="4 3" />
-            `;
-          }
-        });
-      }
-    }
-
-    // 3. Draw direct parent-child lines for visible commits if across branches or merges
-    const visibleDots = container.querySelectorAll('.commit-dot');
-    visibleDots.forEach(dot => {
-      const sha = dot.getAttribute('data-sha');
-      const c = state.commitsMap.get(sha);
-      if (!c || !c.parents) return;
-
-      const dotRect = dot.getBoundingClientRect();
-      const dotCy = (dotRect.top + dotRect.height / 2) - containerRect.top + container.scrollTop;
-      const dotColX = branchCols.get(c.branch) || 24;
-
-      c.parents.forEach(pSha => {
-        const parentDot = container.querySelector(`.commit-dot[data-sha="${pSha}"]`);
-        if (parentDot) {
-          const parentC = state.commitsMap.get(pSha);
-          if (parentC && parentC.branch !== c.branch) {
-            const pRect = parentDot.getBoundingClientRect();
-            const pCy = (pRect.top + pRect.height / 2) - containerRect.top + container.scrollTop;
-            const pColX = branchCols.get(parentC.branch) || 24;
-
-            const midY = (dotCy + pCy) / 2;
-            const color = getBranchColor(c.branch).color;
-
-            svgContent += `
-              <path d="M ${dotColX} ${dotCy} C ${dotColX} ${midY}, ${pColX} ${midY}, ${pColX} ${pCy}" 
-                    fill="none" 
-                    stroke="${color}" 
-                    stroke-width="2" 
-                    stroke-linecap="round" />
-            `;
-          }
-        }
-      });
     });
 
     svg.innerHTML = svgContent;
   }
 
   function attachGraphListeners() {
-    // Commit click -> open inspector
-    document.querySelectorAll('.commit-card').forEach(card => {
+    // Commit click -> select commit & open inspector
+    document.querySelectorAll('.column-commit-card').forEach(card => {
       card.addEventListener('click', () => {
         const sha = card.getAttribute('data-sha');
         if (sha && state.commitsMap.has(sha)) {
@@ -1028,10 +938,11 @@
       });
     });
 
-    // Collapsed pill click -> toggle chain expansion
-    document.querySelectorAll('.collapsed-pill').forEach(pill => {
-      pill.addEventListener('click', () => {
-        const chainId = pill.getAttribute('data-chain-id');
+    // Collapsed card click -> toggle chain expansion
+    document.querySelectorAll('.column-collapsed-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const chainId = card.getAttribute('data-chain-id');
         if (state.expandedChains.has(chainId)) {
           state.expandedChains.delete(chainId);
         } else {
@@ -1040,6 +951,39 @@
         renderGraph();
       });
     });
+
+    // Column header close button click -> disable branch column
+    document.querySelectorAll('.column-close-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const bName = btn.getAttribute('data-branch');
+        if (bName) toggleBranch(bName);
+      });
+    });
+
+    // Origin card click -> smooth scroll & focus parent commit
+    document.querySelectorAll('.column-origin-banner').forEach(banner => {
+      banner.addEventListener('click', () => {
+        const parentSha = banner.getAttribute('data-parent-sha');
+        if (parentSha && state.commitsMap.has(parentSha)) {
+          state.selectedCommit = state.commitsMap.get(parentSha);
+          renderInspector();
+          renderGraph();
+          const targetCard = document.querySelector(`.column-commit-card[data-sha="${parentSha}"]`);
+          if (targetCard) {
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      });
+    });
+
+    // Add Column Card click -> open branch picker modal
+    const addColCard = document.getElementById('btn-add-column-card');
+    if (addColCard) {
+      addColCard.addEventListener('click', () => {
+        openBranchPickerModal();
+      });
+    }
   }
 
   function renderInspector() {
@@ -1254,8 +1198,11 @@
 
     if (btnExpandAll) {
       btnExpandAll.addEventListener('click', () => {
-        state.displayRows.forEach(row => {
-          if (row.type === 'collapsed') state.expandedChains.add(row.chainId);
+        state.selectedBranches.forEach(bName => {
+          const rows = computeBranchDisplayRows(bName);
+          rows.forEach(r => {
+            if (r.type === 'collapsed') state.expandedChains.add(r.chainId);
+          });
         });
         renderGraph();
       });
@@ -1275,25 +1222,15 @@
       });
     }
 
-    // Redraw SVG rails on window resize or viewport scroll
+    // Redraw inter-column SVG connectors on window resize or viewport scroll
     window.addEventListener('resize', () => {
-      const railWidth = Math.max(90, state.selectedBranches.length * 36 + 24);
-      const branchCols = new Map();
-      state.selectedBranches.forEach((name, idx) => {
-        branchCols.set(name, 24 + idx * 36);
-      });
-      renderSvgRails(branchCols, railWidth);
+      renderInterColumnSvg();
     });
 
     const viewport = document.querySelector('.viewport');
     if (viewport) {
       viewport.addEventListener('scroll', () => {
-        const railWidth = Math.max(90, state.selectedBranches.length * 36 + 24);
-        const branchCols = new Map();
-        state.selectedBranches.forEach((name, idx) => {
-          branchCols.set(name, 24 + idx * 36);
-        });
-        renderSvgRails(branchCols, railWidth);
+        renderInterColumnSvg();
       });
     }
 
