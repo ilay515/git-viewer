@@ -27,6 +27,7 @@
     commitsDepth: 50,               // default commits depth
     branchPages: new Map(),         // branchName -> page number
     branchLoadingMore: new Set(),   // set of branches currently fetching more
+    branchOrigins: new Map(),       // branchName -> { commitSha, parentBranch }
   };
 
   // Branch Color Palette (Clean Developer-Grade Colors)
@@ -230,6 +231,10 @@
         forkCommit,
         ...mainBase.reverse(),
       ],
+      origins: [
+        { branch: 'develop', commitSha: forkCommit.sha, parentBranch: 'main' },
+        { branch: 'feature/auth', commitSha: devForkForAuth.sha, parentBranch: 'develop' },
+      ],
     };
   }
 
@@ -358,25 +363,34 @@
   }
 
   async function fetchCommitsForBranches(ownerRepo, selectedBranchNames) {
-    state.commitsMap.clear();
+    if (!selectedBranchNames || selectedBranchNames.length === 0) return;
 
-    if (selectedBranchNames.length === 2) {
-      const [base, head] = selectedBranchNames;
-      renderStatus(`Comparing ${base}...${head}...`);
+    const base = selectedBranchNames[0];
+    const otherBranches = selectedBranchNames.slice(1);
 
+    // 1. Analyze divergence: Compare all secondary branches with base branch
+    for (const head of otherBranches) {
+      renderStatus(`Analyzing divergence: ${base}...${head}...`);
       try {
         const compare = await fetchGitHub(`/repos/${ownerRepo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
 
-        // 1. Merge Base (Common Ancestor / Fork Point)
+        // Common Ancestor / Fork Point
         const mergeBase = compare.merge_base_commit;
         if (mergeBase) {
           const mbObj = formatGitHubCommit(mergeBase, base);
           mbObj.isForkPoint = true;
-          mbObj.forkChildren = [base, head];
+          if (!mbObj.forkChildren) mbObj.forkChildren = [];
+          if (!mbObj.forkChildren.includes(head)) mbObj.forkChildren.push(head);
+          if (!mbObj.forkChildren.includes(base)) mbObj.forkChildren.push(base);
           state.commitsMap.set(mbObj.sha, mbObj);
+
+          state.branchOrigins.set(head, {
+            commitSha: mbObj.sha,
+            parentBranch: base,
+          });
         }
 
-        // 2. Commits on head branch
+        // Commits unique to head branch
         if (compare.commits && compare.commits.length > 0) {
           compare.commits.forEach((c, idx) => {
             const commitObj = formatGitHubCommit(c, head);
@@ -385,15 +399,12 @@
             state.commitsMap.set(commitObj.sha, commitObj);
           });
         }
-
-        // 3. Store behind_by count to synthesize collapsed stretch on base
-        state.behindByCount = compare.behind_by || 0;
       } catch (e) {
-        console.warn('Compare API failed or diverged too far, falling back to direct commit fetch:', e);
+        console.warn(`Compare API failed between ${base} and ${head}:`, e);
       }
     }
 
-    // Fetch commits for each selected branch with configured depth
+    // 2. Fetch configured depth of commits for each selected branch
     for (const bName of selectedBranchNames) {
       state.branchPages.set(bName, 1);
       try {
@@ -501,10 +512,18 @@
 
     if (bCommits.length === 0) return [];
 
+    // Collect active origin commit SHAs so fork points are never collapsed
+    const activeOriginShas = new Set();
+    state.selectedBranches.forEach(b => {
+      if (state.branchOrigins.has(b)) {
+        activeOriginShas.add(state.branchOrigins.get(b).commitSha);
+      }
+    });
+
     bCommits.forEach((c, idx) => {
       if (idx === 0) c.isHead = true;
       if (c.parents && c.parents.length > 1) c.isMerge = true;
-      c.isAnchor = Boolean(c.isHead || c.isForkPoint || c.isDiversionStart || c.isMerge);
+      c.isAnchor = Boolean(c.isHead || c.isForkPoint || c.isDiversionStart || c.isMerge || activeOriginShas.has(c.sha));
     });
 
     if (state.filterMode === 'all') {
@@ -562,33 +581,71 @@
   }
 
   function findBranchOrigin(branchName) {
-    const allCommits = Array.from(state.commitsMap.values());
-    const bCommits = allCommits
-      .filter(c => c.branch === branchName)
-      .sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest first
+    if (!branchName) return null;
 
-    if (bCommits.length === 0) return null;
-    const oldest = bCommits[0];
-
-    if (oldest.parents && oldest.parents.length > 0) {
-      for (const pSha of oldest.parents) {
-        const parentCommit = state.commitsMap.get(pSha);
-        if (parentCommit && parentCommit.branch !== branchName) {
+    // 1. Check persistent branchOrigins map
+    if (state.branchOrigins.has(branchName)) {
+      const orig = state.branchOrigins.get(branchName);
+      if (orig && orig.commitSha && state.commitsMap.has(orig.commitSha)) {
+        const parentCommit = state.commitsMap.get(orig.commitSha);
+        const parentBranch = parentCommit.branch || orig.parentBranch;
+        if (state.selectedBranches.includes(parentBranch)) {
           return {
             commit: parentCommit,
-            parentBranch: parentCommit.branch,
+            parentBranch,
           };
         }
       }
     }
 
-    if (oldest.isDiversionStart) {
-      const forkCommit = allCommits.find(c => c.isForkPoint && c.branch !== branchName);
-      if (forkCommit) {
-        return {
-          commit: forkCommit,
-          parentBranch: forkCommit.branch || state.selectedBranches[0],
-        };
+    // Base branch (index 0) is the reference root, does not originate from other branches unless explicitly recorded above
+    if (state.selectedBranches.length > 0 && branchName === state.selectedBranches[0]) {
+      return null;
+    }
+
+    const allCommits = Array.from(state.commitsMap.values());
+    const bCommits = allCommits.filter(c => c.branch === branchName);
+
+    // 2. Check if any commit in state is a fork point that has this branch in forkChildren
+    const forkCommit = allCommits.find(c =>
+      c.isForkPoint &&
+      c.forkChildren &&
+      c.forkChildren.includes(branchName) &&
+      c.branch !== branchName &&
+      state.selectedBranches.includes(c.branch)
+    );
+    if (forkCommit) {
+      const parentBranch = forkCommit.branch || state.selectedBranches[0];
+      state.branchOrigins.set(branchName, { commitSha: forkCommit.sha, parentBranch });
+      return { commit: forkCommit, parentBranch };
+    }
+
+    // 3. Check for any commit on this branch that is marked as diversion start
+    const divCommit = bCommits.find(c => c.isDiversionStart);
+    if (divCommit && divCommit.parents && divCommit.parents.length > 0) {
+      for (const pSha of divCommit.parents) {
+        const parent = state.commitsMap.get(pSha);
+        if (parent && parent.branch !== branchName && state.selectedBranches.includes(parent.branch)) {
+          state.branchOrigins.set(branchName, { commitSha: parent.sha, parentBranch: parent.branch });
+          return { commit: parent, parentBranch: parent.branch };
+        }
+      }
+    }
+
+    // 4. Check all commits on this branch (oldest to newest) whose parent belongs to another branch
+    const chronologicalCommits = [...bCommits].sort((a, b) => new Date(a.date) - new Date(b.date));
+    for (const c of chronologicalCommits) {
+      if (c.parents && c.parents.length > 0) {
+        for (const pSha of c.parents) {
+          const parentCommit = state.commitsMap.get(pSha);
+          if (parentCommit && parentCommit.branch !== branchName && state.selectedBranches.includes(parentCommit.branch)) {
+            state.branchOrigins.set(branchName, { commitSha: parentCommit.sha, parentBranch: parentCommit.branch });
+            return {
+              commit: parentCommit,
+              parentBranch: parentCommit.branch,
+            };
+          }
+        }
       }
     }
 
@@ -1157,6 +1214,7 @@
 
     // Render inter-column connecting SVG Bézier arcs
     requestAnimationFrame(() => renderInterColumnSvg());
+    setTimeout(() => renderInterColumnSvg(), 60);
   }
 
   // --- SVG INTER-COLUMN CONNECTORS ---
@@ -1181,8 +1239,16 @@
       const parentCommit = origin.commit;
       if (!state.selectedBranches.includes(parentCommit.branch)) return;
 
-      // Find parent dot element
-      const parentDot = board.querySelector(`.column-commit-dot[data-sha="${parentCommit.sha}"]`);
+      // Find parent dot element with resilient fallbacks
+      let parentDot = board.querySelector(`.column-commit-dot[data-sha="${parentCommit.sha}"]`);
+      if (!parentDot) {
+        const parentCard = board.querySelector(`.column-commit-card[data-sha="${parentCommit.sha}"]`);
+        if (parentCard) {
+          parentDot = parentCard.closest('.column-timeline-item')?.querySelector('.column-dot-wrapper') || parentCard;
+        } else {
+          parentDot = board.querySelector(`.branch-column[data-branch="${parentCommit.branch}"] .column-rail-line`);
+        }
+      }
       // Find child origin banner or first commit dot
       const childOriginEl = board.querySelector(`.column-origin-banner[data-child-branch="${childBranch}"]`)
                          || board.querySelector(`.branch-column[data-branch="${childBranch}"] .column-commit-dot`);
@@ -1665,6 +1731,10 @@
     state.selectedBranches = ['main', 'develop', 'feature/auth'];
     state.commitsMap.clear();
     demo.commits.forEach(c => state.commitsMap.set(c.sha, c));
+    state.branchOrigins.clear();
+    if (demo.origins) {
+      demo.origins.forEach(o => state.branchOrigins.set(o.branch, { commitSha: o.commitSha, parentBranch: o.parentBranch }));
+    }
     state.expandedChains.clear();
     state.selectedCommit = null;
     renderStatus('Loaded demo repository with 3 branches: main (20), develop (20), feature/auth (8)');
