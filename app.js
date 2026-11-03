@@ -650,19 +650,28 @@
 
         const dateStr = formatRelativeDate(c.date);
 
+        const armWidth = Math.max(0, railWidth - colX);
+
         html += `
           <div class="graph-node-row" data-row-idx="${rowIndex}" data-branch="${escapeHtml(branchName)}" data-sha="${c.sha}">
             <div class="graph-rails-cell">
+              <div class="connector-arm" style="left:${colX}px; width:${armWidth}px; background:linear-gradient(90deg, ${color.color}, rgba(255,255,255,0.05));"></div>
               <div class="commit-dot" 
                    data-sha="${c.sha}"
                    data-branch="${escapeHtml(branchName)}"
-                   style="background:${color.color}; left:${colX - 7}px;"
+                   style="background:${color.color}; left:${colX - 8}px;"
                    title="${escapeHtml(c.message.split('\n')[0])}">
               </div>
             </div>
-            <div class="commit-card ${isSelected ? 'active-selected' : ''}" data-sha="${c.sha}">
+            <div class="commit-card ${isSelected ? 'active-selected' : ''}" 
+                 data-sha="${c.sha}"
+                 style="border-left-color:${color.color}; background:linear-gradient(90deg, ${color.bg}, rgba(30, 41, 59, 0.55));">
               <div class="commit-main-info">
                 <div class="commit-top-line">
+                  <span class="branch-tag" style="background:${color.bg}; border-color:${color.color}; color:${color.light};">
+                    <span class="pill-dot" style="background:${color.color}; width:6px; height:6px;"></span>
+                    <span>${escapeHtml(branchName)}</span>
+                  </span>
                   <span class="commit-message">${escapeHtml(c.message.split('\n')[0])}</span>
                   ${badgeHtml}
                 </div>
@@ -684,9 +693,12 @@
           </div>
         `;
       } else if (row.type === 'collapsed') {
+        const armWidth = Math.max(0, railWidth - colX);
+
         html += `
           <div class="graph-collapsed-row" data-row-idx="${rowIndex}" data-branch="${escapeHtml(branchName)}" data-chain-id="${row.chainId}">
             <div class="graph-rails-cell">
+              <div class="connector-arm" style="left:${colX}px; width:${armWidth}px; border-top:2px dashed ${color.color}; background:transparent;"></div>
               <div class="collapsed-rail-marker" 
                    data-chain-id="${row.chainId}"
                    data-branch="${escapeHtml(branchName)}"
@@ -695,18 +707,20 @@
               </div>
             </div>
             <div class="collapsed-chain-container" data-chain-id="${row.chainId}">
-              <div class="collapsed-pill" data-chain-id="${row.chainId}">
+              <div class="collapsed-pill" data-chain-id="${row.chainId}" style="border-left:4px dashed ${color.color}; background:linear-gradient(90deg, ${color.bg}, rgba(17, 24, 39, 0.45));">
                 <div class="collapsed-pill-left">
-                  <div class="collapsed-icon">&#x21C5;</div>
+                  <span class="branch-tag" style="background:${color.bg}; border-color:${color.color}; color:${color.light};">
+                    <span class="pill-dot" style="background:${color.color}; width:6px; height:6px;"></span>
+                    <span>${escapeHtml(row.branch)}</span>
+                  </span>
                   <div>
                     <span class="collapsed-count">${row.count} commits collapsed</span>
-                    <span>on <code>${escapeHtml(row.branch)}</code> (linear progression)</span>
                     <span style="color:#64748b; font-size:10px; margin-left:4px;">(${row.startSha} &larr; ${row.endSha})</span>
                   </div>
                 </div>
                 <div class="collapsed-pill-right">
                   ${row.totalAdd || row.totalDel ? `<span style="font-family:var(--font-mono); font-size:10px;">+${row.totalAdd} / -${row.totalDel}</span>` : ''}
-                  <span>${row.isExpanded ? 'Fold &uarr;' : 'Expand &darr;'}</span>
+                  <span style="color:${color.light}; font-weight:600;">${row.isExpanded ? 'Fold &uarr;' : 'Expand &darr;'}</span>
                 </div>
               </div>
         `;
